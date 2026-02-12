@@ -1,5 +1,5 @@
 from flask import Flask
-from app.extensions import scheduler, init_supabase
+from app.extensions import scheduler, init_supabase, get_supabase_config
 from app.dashboard import init_app as init_dashboard
 from flask_cors import CORS
 import os
@@ -34,5 +34,10 @@ def create_app():
     @app.route("/system/health")
     def system_health():
         return "DeepDiver System Active", 200
-        
+
+    # Expose Supabase config to templates
+    @app.context_processor
+    def inject_supabase_config():
+        return {'supabase_config': get_supabase_config()}
+
     return app

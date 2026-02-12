@@ -1,13 +1,17 @@
 import os
 from google.adk.agents import Agent
 from google.adk.model import Model
-from app.agents.tools import log_journal, check_market_status
-from app.agents.prompts import WILSON_SYSTEM_PROMPT
-
-import os
-from google.adk.agents import Agent
-from google.adk.model import Model
-from app.agents.tools import log_journal, check_market_status
+from app.agents.tools import (
+    log_journal,
+    check_market_status,
+    fetch_market_data,
+    write_scan_results,
+    get_current_positions,
+    get_watchlist,
+    update_position,
+    check_alerts,
+    add_to_watchlist
+)
 from app.agents.prompts import WILSON_SYSTEM_PROMPT
 
 # Configure the Model for OpenRouter
@@ -34,6 +38,16 @@ wilson = Agent(
     name="Wilson",
     model=model,
     intro=WILSON_SYSTEM_PROMPT,
-    tools=[log_journal, check_market_status]
+    tools=[
+        log_journal,
+        check_market_status,
+        fetch_market_data,
+        write_scan_results,
+        get_current_positions,
+        get_watchlist,
+        update_position,
+        check_alerts,
+        add_to_watchlist
+    ]
 )
 

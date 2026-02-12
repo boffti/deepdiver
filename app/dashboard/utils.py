@@ -1,40 +1,11 @@
 import os
-import json
-import time
-import fcntl
-import subprocess
-from datetime import datetime
+from app.extensions import supabase
 
-# Configuration from environment variables
-SHEET_ID = os.getenv('GOOGLE_SHEET_ID', '')
-SHEET_RANGE = os.getenv('SHEET_RANGE', "'Main'!A1:W50")
-GOG_ACCOUNT = os.getenv('GOG_ACCOUNT', '')
-CACHE_DURATION = int(os.getenv('CACHE_DURATION', '300'))  # 5 minutes default
+# Configuration
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 
-# File paths - relative to app directory
-# app/dashboard/utils.py -> app/data
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(BASE_DIR, 'data')
-
+# Keep DATA_DIR for backwards compatibility, but won't use it
 os.makedirs(DATA_DIR, exist_ok=True)
-
-ALERTS_FILE = os.path.join(DATA_DIR, 'alerts.json')
-EARNINGS_FILE = os.path.join(DATA_DIR, 'earnings.json')
-SETTINGS_FILE = os.path.join(DATA_DIR, 'settings.json')
-HISTORY_DIR = os.path.join(DATA_DIR, 'history')
-ROUTINES_DIR = os.path.join(DATA_DIR, 'routines')
-CALLS_DATA = os.path.join(DATA_DIR, 'covered_calls.json')
-POSITIONS_DATA = os.path.join(DATA_DIR, 'positions.json')
-
-os.makedirs(HISTORY_DIR, exist_ok=True)
-os.makedirs(ROUTINES_DIR, exist_ok=True)
-
-# Cache storage
-cache = {
-    'data': None,
-    'timestamp': 0,
-    'last_scan_time': None
-}
 
 DEFAULT_SETTINGS = {
     'account_equity': 100000,
@@ -42,184 +13,229 @@ DEFAULT_SETTINGS = {
     'max_positions': 6
 }
 
-def fetch_sheet_data():
-    """Fetch data from Google Sheets using gog CLI"""
-    if not SHEET_ID or not GOG_ACCOUNT:
-        print("Error: GOOGLE_SHEET_ID and GOG_ACCOUNT environment variables must be set")
-        return None
-    
+# Scan helpers
+def get_latest_scan():
+    """Get most recent CANSLIM scan with stocks."""
     try:
-        env = os.environ.copy()
-        env['GOG_ACCOUNT'] = GOG_ACCOUNT
-        
-        cmd = ['gog', 'sheets', 'get', SHEET_ID, SHEET_RANGE, '--json']
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=30)
-        
-        if result.returncode != 0:
-            print(f"Error fetching sheet: {result.stderr}")
-            return None
-        
-        data = json.loads(result.stdout)
-        return data.get('values', [])
+        result = supabase.table('scans') \
+            .select('*, scan_stocks(*)') \
+            .order('created_at', desc=True) \
+            .limit(1) \
+            .execute()
+        return result.data[0] if result.data else None
     except Exception as e:
-        print(f"Exception fetching sheet: {e}")
+        print(f"Error fetching latest scan: {e}")
         return None
 
-def parse_sheet_data(raw_values):
-    """Parse raw sheet values into structured data"""
-    if not raw_values or len(raw_values) < 5:
+def get_scan_by_id(scan_id):
+    """Get specific scan with stocks."""
+    try:
+        result = supabase.table('scans') \
+            .select('*, scan_stocks(*)') \
+            .eq('id', scan_id) \
+            .single() \
+            .execute()
+        return result.data
+    except Exception as e:
+        print(f"Error fetching scan {scan_id}: {e}")
         return None
-    
-    # Row 0: Title and timestamp
-    scan_time = raw_values[0][2] if len(raw_values[0]) > 2 else "Unknown"
-    
-    # Row 1: Market regime
-    market_regime = raw_values[1][0] if len(raw_values[1]) > 0 else ""
-    dist_days = raw_values[1][2] if len(raw_values[1]) > 2 else ""
-    buy_ok = raw_values[1][4] if len(raw_values[1]) > 4 else ""
-    
-    # Row 2: Account info
-    account = raw_values[2][0] if len(raw_values[2]) > 0 else ""
-    risk_per_trade = raw_values[2][2] if len(raw_values[2]) > 2 else ""
-    actionable = raw_values[2][4] if len(raw_values[2]) > 4 else ""
-    
-    # Row 4: Headers (skip row 3 which is empty)
-    headers = raw_values[4] if len(raw_values) > 4 else []
-    
-    # Rows 5+: Stock data
-    stocks = []
-    for i in range(5, len(raw_values)):
-        row = raw_values[i]
-        if row and len(row) > 1:  # Skip empty rows
-            stock = {}
-            for j, header in enumerate(headers):
-                stock[header] = row[j] if j < len(row) else ""
-            stocks.append(stock)
-    
-    return {
-        'scan_time': scan_time,
-        'market': {
-            'regime': market_regime,
-            'dist_days': dist_days,
-            'buy_ok': buy_ok
-        },
-        'account': {
-            'balance': account,
-            'risk_per_trade': risk_per_trade,
-            'actionable': actionable
-        },
-        'headers': headers,
-        'stocks': stocks,
-        'cache_time': cache['timestamp']
-    }
 
-def save_historical_snapshot(data):
-    """Save a snapshot of the current scan to history"""
+def get_all_scans(limit=50):
+    """Get historical scans."""
     try:
-        os.makedirs(HISTORY_DIR, exist_ok=True)
-        filename = f"scan_{datetime.now().strftime('%Y-%m-%d_%H%M')}.json"
-        filepath = os.path.join(HISTORY_DIR, filename)
-        
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
-        
-        print(f"Saved historical snapshot: {filename}")
+        result = supabase.table('scans') \
+            .select('id, created_at, scan_time, market_regime, actionable_count') \
+            .order('created_at', desc=True) \
+            .limit(limit) \
+            .execute()
+        return result.data
     except Exception as e:
-        print(f"Error saving snapshot: {e}")
+        print(f"Error fetching scans: {e}")
+        return []
 
-def get_cached_data(force_refresh=False):
-    """Get data from cache or fetch if expired"""
-    current_time = time.time()
-    
-    if force_refresh or cache['data'] is None or (current_time - cache['timestamp']) > CACHE_DURATION:
-        raw_data = fetch_sheet_data()
-        if raw_data:
-            cache['data'] = parse_sheet_data(raw_data)
-            cache['timestamp'] = current_time
-            
-            # Save historical snapshot if it's a new scan
-            if cache['data'] and cache['data'].get('scan_time') != cache.get('last_scan_time'):
-                save_historical_snapshot(cache['data'])
-                cache['last_scan_time'] = cache['data'].get('scan_time')
-    
-    return cache['data']
-
-def load_json_file(filepath, default=None):
-    """Load JSON file or return default if not exists"""
+# Settings helpers
+def get_settings():
+    """Get all settings as dict."""
     try:
-        if os.path.exists(filepath):
-            with open(filepath, 'r') as f:
-                return json.load(f)
+        result = supabase.table('settings').select('*').execute()
+        settings = {row['key']: row['value'] for row in result.data}
+        # Merge with defaults for missing keys
+        for k, v in DEFAULT_SETTINGS.items():
+            if k not in settings:
+                settings[k] = v
+        return settings
     except Exception as e:
-        print(f"Error loading {filepath}: {e}")
-    return default if default is not None else []
+        print(f"Error fetching settings: {e}")
+        return DEFAULT_SETTINGS.copy()
 
-def save_json_file(filepath, data):
-    """Save data to JSON file using atomic write with file locking"""
+def update_setting(key, value):
+    """Update a single setting."""
     try:
-        tmp_path = filepath + '.tmp'
-        lock_path = filepath + '.lock'
-        with open(lock_path, 'w') as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                with open(tmp_path, 'w') as f:
-                    json.dump(data, f, indent=2)
-                os.rename(tmp_path, filepath)
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        supabase.table('settings') \
+            .upsert({'key': key, 'value': value}) \
+            .execute()
         return True
     except Exception as e:
-        print(f"Error saving {filepath}: {e}")
+        print(f"Error updating setting {key}: {e}")
         return False
 
-# Routine helpers
-def load_routine(date_str):
-    path = os.path.join(ROUTINES_DIR, f'{date_str}.json')
-    if os.path.exists(path):
-        return json.loads(open(path).read())
-    return {'date': date_str}
+# Alert helpers
+def get_all_alerts():
+    """Get all alerts."""
+    try:
+        result = supabase.table('alerts') \
+            .select('*') \
+            .order('created_at', desc=True) \
+            .execute()
+        return result.data
+    except Exception as e:
+        print(f"Error fetching alerts: {e}")
+        return []
 
-def save_routine(date_str, data):
-    data['date'] = date_str
-    data['updated_at'] = datetime.now().isoformat()
-    path = os.path.join(ROUTINES_DIR, f'{date_str}.json')
-    tmp_path = path + '.tmp'
-    lock_path = path + '.lock'
-    with open(lock_path, 'w') as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            with open(tmp_path, 'w') as f:
-                json.dump(data, f, indent=2)
-            os.rename(tmp_path, path)
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+def add_alert(ticker, condition, price):
+    """Add new alert."""
+    try:
+        result = supabase.table('alerts').insert({
+            'ticker': ticker.upper(),
+            'condition': condition,
+            'price': float(price),
+            'triggered': False
+        }).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Error adding alert: {e}")
+        return None
 
-def get_all_routine_dates():
-    """Get set of dates that have routine files."""
-    dates = {}
-    if not os.path.exists(ROUTINES_DIR):
-        return dates
-    for f in os.listdir(ROUTINES_DIR):
-        if f.endswith('.json'):
-            ds = f[:-5]
-            try:
-                data = json.loads(open(os.path.join(ROUTINES_DIR, f)).read())
-                dates[ds] = {
-                    'has_premarket': bool(data.get('premarket')),
-                    'has_postclose': bool(data.get('postclose')),
-                }
-            except:
-                pass
-    return dates
+def delete_alert(alert_id):
+    """Delete alert by ID."""
+    try:
+        supabase.table('alerts').delete().eq('id', alert_id).execute()
+        return True
+    except Exception as e:
+        print(f"Error deleting alert: {e}")
+        return False
 
-# Calls helpers
-def load_calls():
-    return load_json_file(CALLS_DATA, [])
+# Earnings helpers
+def get_all_earnings():
+    """Get earnings calendar."""
+    try:
+        result = supabase.table('earnings').select('*').execute()
+        return {row['ticker']: row['earnings_date'] for row in result.data}
+    except Exception as e:
+        print(f"Error fetching earnings: {e}")
+        return {}
 
-def save_calls(trades):
-    save_json_file(CALLS_DATA, trades)
+def set_earnings_date(ticker, date):
+    """Set earnings date for ticker."""
+    try:
+        supabase.table('earnings') \
+            .upsert({'ticker': ticker.upper(), 'earnings_date': date}) \
+            .execute()
+        return True
+    except Exception as e:
+        print(f"Error setting earnings for {ticker}: {e}")
+        return False
+
+# Position helpers
+def get_all_positions(status=None):
+    """Get positions filtered by status."""
+    try:
+        query = supabase.table('positions').select('*')
+        if status:
+            query = query.eq('status', status)
+        result = query.order('entry_date', desc=True).execute()
+        return result.data
+    except Exception as e:
+        print(f"Error fetching positions: {e}")
+        return []
+
+def add_position(position_data):
+    """Add new position."""
+    try:
+        result = supabase.table('positions').insert(position_data).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Error adding position: {e}")
+        return None
+
+def update_position(position_id, updates):
+    """Update position."""
+    try:
+        result = supabase.table('positions') \
+            .update(updates) \
+            .eq('id', position_id) \
+            .execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Error updating position: {e}")
+        return None
+
+def delete_position(position_id):
+    """Delete position."""
+    try:
+        supabase.table('positions').delete().eq('id', position_id).execute()
+        return True
+    except Exception as e:
+        print(f"Error deleting position: {e}")
+        return False
+
+def _positions_summary(positions):
+    """Calculate positions summary."""
+    open_pos = [p for p in positions if p.get('status') == 'open']
+    closed_pos = [p for p in positions if p.get('status') != 'open']
+    total_pnl = sum(p.get('pnl', 0) or 0 for p in closed_pos)
+
+    return {
+        'open_count': len(open_pos),
+        'closed_count': len(closed_pos),
+        'total_pnl': total_pnl
+    }
+
+# Covered calls helpers
+def get_all_calls():
+    """Get all covered calls."""
+    try:
+        result = supabase.table('covered_calls') \
+            .select('*') \
+            .order('sell_date', desc=True) \
+            .execute()
+        return result.data
+    except Exception as e:
+        print(f"Error fetching calls: {e}")
+        return []
+
+def add_call(call_data):
+    """Add new covered call."""
+    try:
+        result = supabase.table('covered_calls').insert(call_data).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Error adding call: {e}")
+        return None
+
+def update_call(call_id, updates):
+    """Update covered call."""
+    try:
+        result = supabase.table('covered_calls') \
+            .update(updates) \
+            .eq('id', call_id) \
+            .execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Error updating call: {e}")
+        return None
+
+def delete_call(call_id):
+    """Delete covered call."""
+    try:
+        supabase.table('covered_calls').delete().eq('id', call_id).execute()
+        return True
+    except Exception as e:
+        print(f"Error deleting call: {e}")
+        return False
 
 def _calls_summary(trades):
+    """Calculate calls summary."""
     def _summarize(subset, capital=100000):
         if not subset:
             return {'total_premium': 0, 'total_pnl': 0, 'total_trades': 0,
@@ -248,10 +264,7 @@ def _calls_summary(trades):
             'annualized_yield': annualized,
         }
 
-    # Overall summary
     overall = _summarize(trades)
-
-    # Per-ticker summaries
     tickers = sorted(set(t.get('ticker', 'SPY') for t in trades)) if trades else []
     by_ticker = {}
     for tk in tickers:
@@ -262,24 +275,62 @@ def _calls_summary(trades):
     overall['by_ticker'] = by_ticker
     return overall
 
-# Positions helpers
-def load_positions():
-    return load_json_file(POSITIONS_DATA, [])
+# Routine helpers
+def get_routine(date_str):
+    """Get routine for specific date."""
+    try:
+        result = supabase.table('routines') \
+            .select('*') \
+            .eq('date', date_str) \
+            .execute()
 
-def save_positions(positions):
-    save_json_file(POSITIONS_DATA, positions)
+        routines = {'date': date_str}
+        for row in result.data:
+            routines[row['routine_type']] = row['data']
+        return routines
+    except Exception as e:
+        print(f"Error fetching routine for {date_str}: {e}")
+        return {'date': date_str}
 
-def _positions_summary(positions):
-    # This was missing in the original app.py view but referenced. 
-    # I'll implement a basic one or check if I missed it in view_file.
-    # checking view_file output... it was cut off.
-    # I'll implement a basic one.
-    open_pos = [p for p in positions if p.get('status') == 'open']
-    closed_pos = [p for p in positions if p.get('status') != 'open']
-    total_pnl = sum(p.get('pnl', 0) or 0 for p in closed_pos)
-    
-    return {
-        'open_count': len(open_pos),
-        'closed_count': len(closed_pos),
-        'total_pnl': total_pnl
-    }
+def save_routine(date_str, routine_type, data):
+    """Save routine data."""
+    try:
+        supabase.table('routines') \
+            .upsert({
+                'date': date_str,
+                'routine_type': routine_type,
+                'data': data
+            }) \
+            .execute()
+        return True
+    except Exception as e:
+        print(f"Error saving routine: {e}")
+        return False
+
+def get_all_routine_dates():
+    """Get set of dates that have routine records."""
+    try:
+        result = supabase.table('routines') \
+            .select('date, routine_type') \
+            .execute()
+
+        dates = {}
+        for row in result.data:
+            ds = row['date']
+            if ds not in dates:
+                dates[ds] = {'has_premarket': False, 'has_postclose': False}
+            if row['routine_type'] == 'premarket':
+                dates[ds]['has_premarket'] = True
+            elif row['routine_type'] == 'postclose':
+                dates[ds]['has_postclose'] = True
+        return dates
+    except Exception as e:
+        print(f"Error fetching routine dates: {e}")
+        return {}
+
+# Backwards compatibility - legacy function names
+load_calls = get_all_calls
+save_calls = lambda trades: None  # No-op, use add_call/update_call instead
+load_positions = lambda: get_all_positions()
+save_positions = lambda positions: None  # No-op, use add_position/update_position instead
+load_routine = get_routine

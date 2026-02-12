@@ -20,3 +20,10 @@ def init_supabase(app):
             print(f"Failed to initialize Supabase: {e}")
     else:
         print("Supabase credentials not found. Skipping initialization.")
+
+def get_supabase_config():
+    """Get Supabase config for frontend."""
+    return {
+        'url': os.getenv('SUPABASE_URL'),
+        'anon_key': os.getenv('SUPABASE_ANON_KEY')
+    }

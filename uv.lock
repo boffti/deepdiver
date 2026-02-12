@@ -237,6 +237,7 @@ dependencies = [
     { name = "litellm" },
     { name = "openai" },
     { name = "pandas-market-calendars" },
+    { name = "polygon-api-client" },
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "supabase" },
@@ -252,6 +253,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.81.10" },
     { name = "openai", specifier = ">=2.20.0" },
     { name = "pandas-market-calendars", specifier = ">=5.3.0" },
+    { name = "polygon-api-client", specifier = ">=1.16.3" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "supabase", specifier = ">=2.28.0" },
@@ -260,11 +262,11 @@ requires-dist = [
 
 [[package]]
 name = "certifi"
-version = "2026.1.4"
+version = "2025.11.12"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e0/2d/a891ca51311197f6ad14a7ef42e2399f36cf2f9bd44752b3dc4eab60fdc5/certifi-2026.1.4.tar.gz", hash = "sha256:ac726dd470482006e014ad384921ed6438c457018f4b3d204aea4281258b2120", size = 154268, upload-time = "2026-01-04T02:42:41.825Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/8c/58f469717fa48465e4a50c014a0400602d3c437d7c0c468e17ada824da3a/certifi-2025.11.12.tar.gz", hash = "sha256:d8ab5478f2ecd78af242878415affce761ca6bc54a22a27e026d7c25357c3316", size = 160538, upload-time = "2025-11-12T02:54:51.517Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/ad/3cc14f097111b4de0040c83a525973216457bbeeb63739ef1ed275c1c021/certifi-2026.1.4-py3-none-any.whl", hash = "sha256:9943707519e4add1115f44c2bc244f782c0249876bf51b6599fee1ffbedd685c", size = 152900, upload-time = "2026-01-04T02:42:40.15Z" },
+    { url = "https://files.pythonhosted.org/packages/70/7d/9bc192684cea499815ff478dfcdc13835ddf401365057044fb721ec6bddb/certifi-2025.11.12-py3-none-any.whl", hash = "sha256:97de8790030bbd5c2d96b7ec782fc2f7820ef8dba6db909ccf95449f2d062d4b", size = 159438, upload-time = "2025-11-12T02:54:49.735Z" },
 ]
 
 [[package]]
@@ -2280,6 +2282,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7e/73/3e6dcdf9928a9d85d93e8235d99a516e7c010f24193888aa9cbcd12176e6/pandas_market_calendars-5.3.0.tar.gz", hash = "sha256:9f8196c5684b4340b5fc0e3fe1094c145544e85062386ad7aa298d39f04b5548", size = 170252, upload-time = "2026-01-25T22:02:42.984Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/30/87e23c9fad369ca7b0e72a88a79e7109f11a0d3f77c589a31405715177d2/pandas_market_calendars-5.3.0-py3-none-any.whl", hash = "sha256:882e34076c1fa4501939ce3fef671cd0840407e6861443cdfb4debb78e10bf8a", size = 131385, upload-time = "2026-01-25T22:02:41.393Z" },
+]
+
+[[package]]
+name = "polygon-api-client"
+version = "1.16.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "urllib3" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9a/c6/f552a630041f5d9b60d3bf7736db54969648c4c0938cb6ff45abe1bd16ec/polygon_api_client-1.16.3.tar.gz", hash = "sha256:df575ff6a4a7636cc92272803749adca7e81d2340af493c51a19fe75b51530fc", size = 44077, upload-time = "2025-10-30T14:39:25.445Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/5e/a7121fd1ba43ec8672c0fb481e119ea9dede5f0ba6016f45f272e49c6de5/polygon_api_client-1.16.3-py3-none-any.whl", hash = "sha256:4dec9e27fb5d17a36aacd9372d1df30af2f2b7639b4166ca10d2d48d128d2cd8", size = 61992, upload-time = "2025-10-30T14:39:24.134Z" },
 ]
 
 [[package]]

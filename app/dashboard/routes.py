@@ -6,12 +6,14 @@ import json
 import os
 
 from .utils import (
-    get_cached_data, load_json_file, save_json_file, 
-    load_routine, save_routine, get_all_routine_dates,
-    load_calls, save_calls, _calls_summary,
-    load_positions, save_positions, _positions_summary,
-    SETTINGS_FILE, ALERTS_FILE, EARNINGS_FILE, HISTORY_DIR, 
-    DEFAULT_SETTINGS, SECTION_DIVIDERS
+    get_latest_scan, get_scan_by_id, get_all_scans,
+    get_settings, update_setting,
+    get_all_alerts, add_alert, delete_alert,
+    get_all_earnings, set_earnings_date,
+    get_all_positions, add_position, update_position, delete_position, _positions_summary,
+    get_all_calls, add_call, update_call, delete_call, _calls_summary,
+    get_routine, save_routine, get_all_routine_dates,
+    DEFAULT_SETTINGS
 )
 
 # Define Blueprint
@@ -25,52 +27,42 @@ def index():
 
 @bp.route('/api/data')
 def api_data():
-    """Return cached sheet data as JSON"""
-    data = get_cached_data()
-    if data is None:
-        return jsonify({'error': 'Failed to fetch data'}), 500
-    
-    # Calculate Shares and Cost for each stock
-    settings = load_json_file(SETTINGS_FILE, {})
-    account_equity = settings.get('account_equity', 100000)
-    risk_pct = settings.get('risk_pct', 0.01)
-    risk_per_trade = account_equity * risk_pct
-    
-    for stock in data['stocks']:
-        try:
-            pivot = float(stock.get('Pivot', 0))
-            stop = float(stock.get('Stop', 0))
-            if pivot > 0 and stop > 0 and pivot > stop:
-                risk_per_share = pivot - stop
-                shares = int(risk_per_trade / risk_per_share)
-                stock['Shares'] = str(shares)
-                stock['Cost'] = f"${shares * pivot:,.0f}"
-            else:
+    """Return latest scan data as JSON"""
+    try:
+        scan = get_latest_scan()
+        if scan is None:
+            return jsonify({'error': 'No scans found'}), 404
+
+        # Calculate Shares and Cost for each stock
+        settings = get_settings()
+        account_equity = float(settings.get('account_equity', 100000))
+        risk_pct = float(settings.get('risk_pct', 0.01))
+        risk_per_trade = account_equity * risk_pct
+
+        for stock in scan.get('scan_stocks', []):
+            try:
+                pivot = float(stock.get('pivot', 0))
+                stop = float(stock.get('stop', 0))
+                if pivot > 0 and stop > 0 and pivot > stop:
+                    risk_per_share = pivot - stop
+                    shares = int(risk_per_trade / risk_per_share)
+                    stock['Shares'] = str(shares)
+                    stock['Cost'] = f"${shares * pivot:,.0f}"
+                else:
+                    stock['Shares'] = ''
+                    stock['Cost'] = ''
+            except (ValueError, ZeroDivisionError):
                 stock['Shares'] = ''
                 stock['Cost'] = ''
-        except (ValueError, ZeroDivisionError):
-            stock['Shares'] = ''
-            stock['Cost'] = ''
-    
-    # Add 'Cost' to headers if not already present
-    headers = data.get('headers', [])
-    if 'Cost' not in headers:
-        # Add after 'Shares' if it exists, otherwise at the end
-        if 'Shares' in headers:
-            shares_idx = headers.index('Shares')
-            headers.insert(shares_idx + 1, 'Cost')
-        else:
-            headers.append('Cost')
-    
-    return jsonify(data)
+
+        return jsonify(scan)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @bp.route('/api/refresh')
 def api_refresh():
-    """Force refresh the data"""
-    data = get_cached_data(force_refresh=True)
-    if data is None:
-        return jsonify({'error': 'Failed to refresh data'}), 500
-    return jsonify(data)
+    """Force refresh (no-op now, just returns latest data)"""
+    return api_data()
 
 @bp.route('/api/export')
 def api_export():
@@ -114,25 +106,24 @@ def api_export():
 @bp.route('/api/alerts', methods=['GET'])
 def get_alerts():
     """Get all alerts"""
-    alerts = load_json_file(ALERTS_FILE, [])
-    return jsonify(alerts)
+    return jsonify(get_all_alerts())
 
 @bp.route('/api/alerts', methods=['POST'])
-def add_alert():
+def add_alert_api():
     """Add a new alert"""
     try:
         data = request.json or {}
-        
+
         # Validate ticker
         ticker = data.get('ticker', '').strip().upper()
         if not ticker or len(ticker) > 10 or not ticker.replace('.', '').replace('-', '').isalnum():
             return jsonify({'error': 'Invalid ticker (max 10 alphanumeric chars)'}), 400
-        
+
         # Validate condition
         condition = data.get('condition', 'above')
         if condition not in ['above', 'below']:
             return jsonify({'error': 'Invalid condition (must be above or below)'}), 400
-        
+
         # Validate price
         try:
             price = float(data.get('price', 0))
@@ -140,43 +131,24 @@ def add_alert():
                 return jsonify({'error': 'Invalid price (must be positive, max $1M)'}), 400
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid price (must be a number)'}), 400
-        
-        alerts = load_json_file(ALERTS_FILE, [])
-        
-        new_alert = {
-            'ticker': ticker,
-            'condition': condition,
-            'price': price,
-            'created': datetime.utcnow().isoformat(),
-            'triggered': False
-        }
-        
-        alerts.append(new_alert)
-        
-        if save_json_file(ALERTS_FILE, alerts):
-            return jsonify(new_alert), 201
+
+        alert = add_alert(ticker, condition, price)
+        if alert:
+            return jsonify(alert), 201
         else:
             return jsonify({'error': 'Failed to save alert'}), 500
-            
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@bp.route('/api/alerts/<int:index>', methods=['DELETE'])
-def delete_alert(index):
-    """Delete an alert by index"""
+@bp.route('/api/alerts/<int:alert_id>', methods=['DELETE'])
+def delete_alert_api(alert_id):
+    """Delete an alert by ID"""
     try:
-        alerts = load_json_file(ALERTS_FILE, [])
-        
-        if index < 0 or index >= len(alerts):
-            return jsonify({'error': 'Invalid index'}), 404
-        
-        deleted = alerts.pop(index)
-        
-        if save_json_file(ALERTS_FILE, alerts):
-            return jsonify({'deleted': deleted}), 200
+        if delete_alert(alert_id):
+            return jsonify({'ok': True}), 200
         else:
             return jsonify({'error': 'Failed to delete alert'}), 500
-            
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -184,8 +156,7 @@ def delete_alert(index):
 @bp.route('/api/earnings', methods=['GET'])
 def get_earnings():
     """Get all earnings dates"""
-    earnings = load_json_file(EARNINGS_FILE, {})
-    return jsonify(earnings)
+    return jsonify(get_all_earnings())
 
 @bp.route('/api/earnings', methods=['POST'])
 def set_earnings():
@@ -194,90 +165,58 @@ def set_earnings():
         data = request.json
         ticker = data.get('ticker', '').upper()
         date = data.get('date', '')
-        
+
         if not ticker or not date:
             return jsonify({'error': 'Invalid ticker or date'}), 400
-        
-        earnings = load_json_file(EARNINGS_FILE, {})
-        earnings[ticker] = date
-        
-        if save_json_file(EARNINGS_FILE, earnings):
+
+        if set_earnings_date(ticker, date):
             return jsonify({'ticker': ticker, 'date': date}), 200
         else:
             return jsonify({'error': 'Failed to save earnings date'}), 500
-            
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 # --- History API endpoints ---
 @bp.route('/api/history', methods=['GET'])
 def get_history():
-    """List all historical snapshots"""
+    """List all historical scans"""
     try:
-        if not os.path.exists(HISTORY_DIR):
-            return jsonify([])
-        
-        files = []
-        for filename in sorted(os.listdir(HISTORY_DIR), reverse=True):
-            if filename.endswith('.json'):
-                filepath = os.path.join(HISTORY_DIR, filename)
-                with open(filepath, 'r') as f:
-                    data = json.load(f)
-                    files.append({
-                        'filename': filename,
-                        'scan_time': data.get('scan_time', 'Unknown'),
-                        'stock_count': len(data.get('stocks', []))
-                    })
-        
-        return jsonify(files)
+        scans = get_all_scans(limit=100)
+        return jsonify(scans)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@bp.route('/api/history/<filename>', methods=['GET'])
-def get_historical_snapshot(filename):
-    """Get a specific historical snapshot"""
+@bp.route('/api/history/<int:scan_id>', methods=['GET'])
+def get_historical_scan(scan_id):
+    """Get specific historical scan"""
     try:
-        filepath = os.path.join(HISTORY_DIR, filename)
-        
-        if not os.path.exists(filepath):
-            return jsonify({'error': 'Snapshot not found'}), 404
-        
-        with open(filepath, 'r') as f:
-            data = json.load(f)
-        
-        return jsonify(data)
+        scan = get_scan_by_id(scan_id)
+        if not scan:
+            return jsonify({'error': 'Scan not found'}), 404
+        return jsonify(scan)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 # --- Settings API endpoints ---
 @bp.route('/api/settings', methods=['GET'])
-def get_settings():
+def get_settings_api():
     """Get scanner settings"""
-    settings = load_json_file(SETTINGS_FILE, DEFAULT_SETTINGS)
-    # Merge with defaults for any missing keys
-    for k, v in DEFAULT_SETTINGS.items():
-        if k not in settings:
-            settings[k] = v
-    return jsonify(settings)
+    return jsonify(get_settings())
 
 @bp.route('/api/settings', methods=['POST'])
-def update_settings():
+def update_settings_api():
     """Update scanner settings"""
     try:
         data = request.json
-        settings = load_json_file(SETTINGS_FILE, DEFAULT_SETTINGS)
-        
         if 'account_equity' in data:
-            settings['account_equity'] = float(data['account_equity'])
+            update_setting('account_equity', float(data['account_equity']))
         if 'risk_pct' in data:
-            settings['risk_pct'] = float(data['risk_pct'])
+            update_setting('risk_pct', float(data['risk_pct']))
         if 'max_positions' in data:
-            settings['max_positions'] = int(data['max_positions'])
-        
-        if save_json_file(SETTINGS_FILE, settings):
-            return jsonify(settings), 200
-        else:
-            return jsonify({'error': 'Failed to save settings'}), 500
+            update_setting('max_positions', int(data['max_positions']))
+
+        return jsonify(get_settings()), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -357,20 +296,19 @@ def calls_page():
 
 @bp.route('/api/calls', methods=['GET'])
 def api_calls_get():
-    trades = load_calls()
+    trades = get_all_calls()
     return jsonify({'trades': trades, 'summary': _calls_summary(trades)})
 
 @bp.route('/api/calls', methods=['POST'])
 def api_calls_add():
     try:
         data = request.json or {}
-        trades = load_calls()
-        
+
         # Validate ticker
         ticker = data.get('ticker', 'SPY').strip().upper()
         if not ticker or len(ticker) > 10 or not ticker.replace('.', '').replace('-', '').isalnum():
             return jsonify({'error': 'Invalid ticker (max 10 alphanumeric chars)'}), 400
-        
+
         # Validate contracts
         try:
             contracts = int(data.get('contracts', 1))
@@ -378,7 +316,7 @@ def api_calls_add():
                 return jsonify({'error': 'Invalid contracts (must be 1-10,000)'}), 400
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid contracts (must be an integer)'}), 400
-        
+
         # Validate premium_per_contract
         try:
             premium_per = float(data.get('premium_per_contract', 0))
@@ -386,7 +324,7 @@ def api_calls_add():
                 return jsonify({'error': 'Invalid premium (must be 0-$10,000)'}), 400
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid premium (must be a number)'}), 400
-        
+
         # Validate strike
         try:
             strike = float(data.get('strike', 0))
@@ -394,9 +332,8 @@ def api_calls_add():
                 return jsonify({'error': 'Invalid strike (must be positive, max $100k)'}), 400
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid strike (must be a number)'}), 400
-        
+
         trade = {
-            'id': (max((t.get('id', 0) for t in trades), default=0) + 1),
             'ticker': ticker,
             'sell_date': data.get('sell_date', datetime.now().strftime('%Y-%m-%d')),
             'expiry': data.get('expiry', ''),
@@ -411,44 +348,68 @@ def api_calls_add():
             'close_price': None,
             'pnl': None,
             'notes': data.get('notes', ''),
-            'created_at': datetime.now().isoformat(),
         }
-        trades.append(trade)
-        save_calls(trades)
-        return jsonify({'ok': True, 'trade': trade}), 201
+
+        result = add_call(trade)
+        if result:
+            return jsonify({'ok': True, 'trade': result}), 201
+        else:
+            return jsonify({'error': 'Failed to add call'}), 500
     except Exception as e:
         return jsonify({'error': f'Server error: {str(e)}'}), 500
 
-@bp.route('/api/calls/<int:trade_id>', methods=['PATCH'])
-def api_calls_close(trade_id):
-    data = request.json
-    trades = load_calls()
-    for t in trades:
-        if t.get('id') == trade_id:
-            status = data.get('status', 'expired')
-            t['status'] = status
-            t['close_date'] = data.get('close_date', datetime.now().strftime('%Y-%m-%d'))
-            if status == 'expired':
-                t['pnl'] = t['premium_total']
-            elif status == 'called_away':
-                price_at_sell = t.get('stock_price_at_sell', 0)
-                appreciation = (t['strike'] - price_at_sell) * t['contracts'] * 100
-                t['pnl'] = round(t['premium_total'] + appreciation, 2)
-            else:
-                buyback = data.get('buyback_price', 0) * t['contracts'] * 100
-                t['pnl'] = round(t['premium_total'] - buyback, 2)
-                t['close_price'] = data.get('buyback_price', 0)
-            t['notes'] = data.get('notes', t.get('notes', ''))
-            break
-    save_calls(trades)
-    return jsonify({'ok': True})
+@bp.route('/api/calls/<int:call_id>', methods=['PATCH'])
+def api_calls_close(call_id):
+    try:
+        data = request.json
+        calls = get_all_calls()
 
-@bp.route('/api/calls/<int:trade_id>', methods=['DELETE'])
-def api_calls_delete(trade_id):
-    trades = load_calls()
-    trades = [t for t in trades if t.get('id') != trade_id]
-    save_calls(trades)
-    return jsonify({'ok': True})
+        # Find the call to update
+        trade = None
+        for t in calls:
+            if t.get('id') == call_id:
+                trade = t
+                break
+
+        if not trade:
+            return jsonify({'error': 'Call not found'}), 404
+
+        status = data.get('status', 'expired')
+        updates = {
+            'status': status,
+            'close_date': data.get('close_date', datetime.now().strftime('%Y-%m-%d'))
+        }
+
+        if status == 'expired':
+            updates['pnl'] = trade['premium_total']
+        elif status == 'called_away':
+            price_at_sell = trade.get('stock_price_at_sell', 0)
+            appreciation = (trade['strike'] - price_at_sell) * trade['contracts'] * 100
+            updates['pnl'] = round(trade['premium_total'] + appreciation, 2)
+        else:
+            buyback = data.get('buyback_price', 0) * trade['contracts'] * 100
+            updates['pnl'] = round(trade['premium_total'] - buyback, 2)
+            updates['close_price'] = data.get('buyback_price', 0)
+
+        updates['notes'] = data.get('notes', trade.get('notes', ''))
+
+        result = update_call(call_id, updates)
+        if result:
+            return jsonify({'ok': True})
+        else:
+            return jsonify({'error': 'Failed to update call'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@bp.route('/api/calls/<int:call_id>', methods=['DELETE'])
+def api_calls_delete(call_id):
+    try:
+        if delete_call(call_id):
+            return jsonify({'ok': True})
+        else:
+            return jsonify({'error': 'Failed to delete call'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # --- Health Check ---
 @bp.route('/api/health')
@@ -458,7 +419,7 @@ def health():
 # --- Trade Tracker: Stock Positions ---
 @bp.route('/api/positions', methods=['GET'])
 def api_positions_get():
-    positions = load_positions()
+    positions = get_all_positions()
     return jsonify({'positions': positions, 'summary': _positions_summary(positions)})
 
 @bp.route('/api/quotes', methods=['GET'])
@@ -473,13 +434,12 @@ def api_quotes():
 def api_positions_add():
     try:
         data = request.json or {}
-        positions = load_positions()
-        
+
         # Validate ticker
         ticker = data.get('ticker', '').strip().upper()
         if not ticker or len(ticker) > 10 or not ticker.replace('.', '').replace('-', '').isalnum():
             return jsonify({'error': 'Invalid ticker (max 10 alphanumeric chars)'}), 400
-        
+
         # Validate shares
         try:
             shares = int(data.get('shares', 0))
@@ -487,7 +447,7 @@ def api_positions_add():
                 return jsonify({'error': 'Invalid shares (must be 1-1,000,000)'}), 400
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid shares (must be an integer)'}), 400
-        
+
         # Validate entry_price
         try:
             entry_price = float(data.get('entry_price', 0))
@@ -495,18 +455,17 @@ def api_positions_add():
                 return jsonify({'error': 'Invalid entry price (must be positive, max $100k)'}), 400
         except (ValueError, TypeError):
             return jsonify({'error': 'Invalid entry price (must be a number)'}), 400
-        
+
         # Validate optional prices
         stop_price = float(data.get('stop_price', 0)) if data.get('stop_price') else 0
         target_price = float(data.get('target_price', 0)) if data.get('target_price') else 0
-        
+
         # Validate trade_type
         trade_type = data.get('trade_type', 'long')
         if trade_type not in ['long', 'short']:
             return jsonify({'error': 'Invalid trade_type (must be long or short)'}), 400
-        
+
         position = {
-            'id': (max((p.get('id', 0) for p in positions), default=0) + 1),
             'ticker': ticker,
             'account': data.get('account', 'default'),
             'trade_type': trade_type,
@@ -522,10 +481,12 @@ def api_positions_add():
             'close_price': None,
             'pnl': None,
             'notes': data.get('notes', ''),
-            'created_at': datetime.now().isoformat(),
         }
-        positions.append(position)
-        save_positions(positions)
-        return jsonify({'ok': True, 'position': position}), 201
+
+        result = add_position(position)
+        if result:
+            return jsonify({'ok': True, 'position': result}), 201
+        else:
+            return jsonify({'error': 'Failed to add position'}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500

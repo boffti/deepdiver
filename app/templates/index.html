@@ -583,6 +583,9 @@
             border: 1px solid #e74c3c;
         }
     </style>
+
+    <!-- Supabase JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
     <div class="container">
@@ -1438,6 +1441,183 @@
 
         // Initial load
         loadData();
+    </script>
+
+    <!-- Supabase Real-time Subscriptions -->
+    <script>
+    // Initialize Supabase client
+    const SUPABASE_CONFIG = {
+        url: '{{ supabase_config.url }}',
+        anonKey: '{{ supabase_config.anon_key }}'
+    };
+
+    let supabaseClient = null;
+
+    if (SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey) {
+        supabaseClient = window.supabase.createClient(
+            SUPABASE_CONFIG.url,
+            SUPABASE_CONFIG.anonKey
+        );
+
+        setupRealtimeSubscriptions();
+    }
+
+    function setupRealtimeSubscriptions() {
+        if (!supabaseClient) return;
+
+        // 1. Listen for new scans
+        supabaseClient
+            .channel('scans-channel')
+            .on('postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'scans' },
+                (payload) => {
+                    console.log('🔍 New scan detected:', payload.new);
+                    showNotification('New CANSLIM scan available');
+                    loadData();
+                })
+            .subscribe();
+
+        // 2. Listen for position changes
+        supabaseClient
+            .channel('positions-channel')
+            .on('postgres_changes',
+                { event: '*', schema: 'public', table: 'positions' },
+                (payload) => {
+                    console.log('📊 Position updated:', payload);
+                    loadData();
+                })
+            .subscribe();
+
+        // 3. Listen for triggered alerts
+        supabaseClient
+            .channel('alerts-channel')
+            .on('postgres_changes',
+                { event: 'UPDATE', schema: 'public', table: 'alerts' },
+                (payload) => {
+                    if (payload.new.triggered && !payload.old.triggered) {
+                        const msg = `🚨 Alert: ${payload.new.ticker} ${payload.new.condition} $${payload.new.price}`;
+                        showNotification(msg);
+                        playAlertSound();
+                    }
+                })
+            .subscribe();
+
+        // 4. Listen for Wilson's journal entries
+        supabaseClient
+            .channel('journal-channel')
+            .on('postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'journal' },
+                (payload) => {
+                    console.log('📝 Wilson logged:', payload.new);
+                    if (payload.new.category === 'Trade') {
+                        showNotification(`Wilson: ${payload.new.content}`);
+                    }
+                })
+            .subscribe();
+
+        // Connection status monitoring
+        supabaseClient
+            .channel('system')
+            .on('system', { event: 'connected' }, () => {
+                console.log('✓ Real-time connected');
+                updateConnectionStatus(true);
+            })
+            .on('system', { event: 'disconnected' }, () => {
+                console.warn('✗ Real-time disconnected');
+                updateConnectionStatus(false);
+            })
+            .subscribe();
+    }
+
+    function showNotification(message) {
+        // Browser notification
+        if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('DeepDiver', { body: message });
+        }
+
+        // In-app toast
+        const toast = document.createElement('div');
+        toast.className = 'toast-notification';
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 1001;
+            animation: slideIn 0.3s ease;
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 5000);
+    }
+
+    function playAlertSound() {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
+        } catch (e) {
+            console.log('Audio play failed:', e);
+        }
+    }
+
+    function updateConnectionStatus(connected) {
+        let indicator = document.getElementById('realtime-status');
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.id = 'realtime-status';
+            indicator.title = 'Real-time connection status';
+            indicator.style.cssText = `
+                position: fixed;
+                top: 10px;
+                right: 10px;
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                z-index: 1000;
+            `;
+            document.body.appendChild(indicator);
+        }
+
+        if (connected) {
+            indicator.style.background = '#00ff00';
+            indicator.style.boxShadow = '0 0 10px #00ff00';
+        } else {
+            indicator.style.background = '#ff0000';
+            indicator.style.boxShadow = '0 0 10px #ff0000';
+        }
+    }
+
+    // Request notification permission on load
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+
+    // Add CSS animation
+    const style = document.createElement('style');
+    style.textContent = `
+    @keyframes slideIn {
+        from { transform: translateX(400px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+    }
+    `;
+    document.head.appendChild(style);
     </script>
 </body>
 </html>
