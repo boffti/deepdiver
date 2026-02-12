@@ -1,5 +1,4 @@
 import os
-from app.extensions import supabase
 
 # Configuration
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
@@ -13,9 +12,15 @@ DEFAULT_SETTINGS = {
     'max_positions': 6
 }
 
+def _get_supabase():
+    """Get Supabase client (lazy import to avoid circular dependency)"""
+    from app.extensions import supabase
+    return supabase
+
 # Scan helpers
 def get_latest_scan():
     """Get most recent CANSLIM scan with stocks."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('scans') \
             .select('*, scan_stocks(*)') \
@@ -29,6 +34,7 @@ def get_latest_scan():
 
 def get_scan_by_id(scan_id):
     """Get specific scan with stocks."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('scans') \
             .select('*, scan_stocks(*)') \
@@ -42,6 +48,7 @@ def get_scan_by_id(scan_id):
 
 def get_all_scans(limit=50):
     """Get historical scans."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('scans') \
             .select('id, created_at, scan_time, market_regime, actionable_count') \
@@ -56,6 +63,7 @@ def get_all_scans(limit=50):
 # Settings helpers
 def get_settings():
     """Get all settings as dict."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('settings').select('*').execute()
         settings = {row['key']: row['value'] for row in result.data}
@@ -70,6 +78,7 @@ def get_settings():
 
 def update_setting(key, value):
     """Update a single setting."""
+    supabase = _get_supabase()
     try:
         supabase.table('settings') \
             .upsert({'key': key, 'value': value}) \
@@ -82,6 +91,7 @@ def update_setting(key, value):
 # Alert helpers
 def get_all_alerts():
     """Get all alerts."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('alerts') \
             .select('*') \
@@ -94,6 +104,7 @@ def get_all_alerts():
 
 def add_alert(ticker, condition, price):
     """Add new alert."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('alerts').insert({
             'ticker': ticker.upper(),
@@ -108,6 +119,7 @@ def add_alert(ticker, condition, price):
 
 def delete_alert(alert_id):
     """Delete alert by ID."""
+    supabase = _get_supabase()
     try:
         supabase.table('alerts').delete().eq('id', alert_id).execute()
         return True
@@ -118,6 +130,7 @@ def delete_alert(alert_id):
 # Earnings helpers
 def get_all_earnings():
     """Get earnings calendar."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('earnings').select('*').execute()
         return {row['ticker']: row['earnings_date'] for row in result.data}
@@ -127,6 +140,7 @@ def get_all_earnings():
 
 def set_earnings_date(ticker, date):
     """Set earnings date for ticker."""
+    supabase = _get_supabase()
     try:
         supabase.table('earnings') \
             .upsert({'ticker': ticker.upper(), 'earnings_date': date}) \
@@ -139,6 +153,7 @@ def set_earnings_date(ticker, date):
 # Position helpers
 def get_all_positions(status=None):
     """Get positions filtered by status."""
+    supabase = _get_supabase()
     try:
         query = supabase.table('positions').select('*')
         if status:
@@ -151,6 +166,7 @@ def get_all_positions(status=None):
 
 def add_position(position_data):
     """Add new position."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('positions').insert(position_data).execute()
         return result.data[0] if result.data else None
@@ -160,6 +176,7 @@ def add_position(position_data):
 
 def update_position(position_id, updates):
     """Update position."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('positions') \
             .update(updates) \
@@ -172,6 +189,7 @@ def update_position(position_id, updates):
 
 def delete_position(position_id):
     """Delete position."""
+    supabase = _get_supabase()
     try:
         supabase.table('positions').delete().eq('id', position_id).execute()
         return True
@@ -194,6 +212,7 @@ def _positions_summary(positions):
 # Covered calls helpers
 def get_all_calls():
     """Get all covered calls."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('covered_calls') \
             .select('*') \
@@ -206,6 +225,7 @@ def get_all_calls():
 
 def add_call(call_data):
     """Add new covered call."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('covered_calls').insert(call_data).execute()
         return result.data[0] if result.data else None
@@ -215,6 +235,7 @@ def add_call(call_data):
 
 def update_call(call_id, updates):
     """Update covered call."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('covered_calls') \
             .update(updates) \
@@ -227,6 +248,7 @@ def update_call(call_id, updates):
 
 def delete_call(call_id):
     """Delete covered call."""
+    supabase = _get_supabase()
     try:
         supabase.table('covered_calls').delete().eq('id', call_id).execute()
         return True
@@ -278,6 +300,7 @@ def _calls_summary(trades):
 # Routine helpers
 def get_routine(date_str):
     """Get routine for specific date."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('routines') \
             .select('*') \
@@ -294,6 +317,7 @@ def get_routine(date_str):
 
 def save_routine(date_str, routine_type, data):
     """Save routine data."""
+    supabase = _get_supabase()
     try:
         supabase.table('routines') \
             .upsert({
@@ -309,6 +333,7 @@ def save_routine(date_str, routine_type, data):
 
 def get_all_routine_dates():
     """Get set of dates that have routine records."""
+    supabase = _get_supabase()
     try:
         result = supabase.table('routines') \
             .select('date, routine_type') \
