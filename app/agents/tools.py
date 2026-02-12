@@ -4,7 +4,8 @@ import requests
 import json
 import os
 from datetime import datetime
-from polygon import RESTClient
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockSnapshotRequest
 
 def _log_journal(agent: str, category: str, content: str) -> str:
     """Logs an event to the cloud database (Supabase).
@@ -55,7 +56,7 @@ def _check_market_status() -> str:
     return f"Market is {status} (Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')})"
 
 def _fetch_market_data(tickers: str) -> str:
-    """Fetches real-time price and technical data from Polygon.io.
+    """Fetches real-time price and technical data from Alpaca.
 
     Args:
         tickers: Comma-separated list of stock symbols (e.g., "AAPL,MSFT,GOOGL")
@@ -63,27 +64,40 @@ def _fetch_market_data(tickers: str) -> str:
     Returns:
         JSON string with price data and technical indicators for each ticker
     """
-    api_key = os.getenv('POLYGON_API_KEY')
-    if not api_key:
-        return "Error: POLYGON_API_KEY not set in environment"
+    api_key = os.getenv('ALPACA_API_KEY')
+    secret_key = os.getenv('ALPACA_SECRET_KEY')
+
+    if not api_key or not secret_key:
+        return "Error: ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment"
 
     try:
-        client = RESTClient(api_key)
+        client = StockHistoricalDataClient(api_key, secret_key)
         ticker_list = [t.strip().upper() for t in tickers.split(',')]
-        results = []
 
+        # Create request for stock snapshots
+        request = StockSnapshotRequest(symbol_or_symbols=ticker_list)
+        snapshots = client.get_stock_snapshot(request)
+
+        results = []
         for ticker in ticker_list:
             try:
-                snapshot = client.get_snapshot_ticker('stocks', ticker)
+                snapshot = snapshots.get(ticker)
+                if snapshot and snapshot.latest_trade:
+                    # Calculate change percentage
+                    if snapshot.daily_bar and snapshot.daily_bar.close and snapshot.previous_daily_bar:
+                        prev_close = snapshot.previous_daily_bar.close
+                        current_close = snapshot.daily_bar.close
+                        change_pct = ((current_close - prev_close) / prev_close) * 100
+                    else:
+                        change_pct = 0.0
 
-                if snapshot and snapshot.ticker:
                     data = {
                         'ticker': ticker,
-                        'price': snapshot.day.close if snapshot.day else 0,
-                        'volume': snapshot.day.volume if snapshot.day else 0,
-                        'change_pct': snapshot.day.change_percent if snapshot.day else 0,
-                        'high': snapshot.day.high if snapshot.day else 0,
-                        'low': snapshot.day.low if snapshot.day else 0,
+                        'price': float(snapshot.latest_trade.price) if snapshot.latest_trade else 0,
+                        'volume': int(snapshot.daily_bar.volume) if snapshot.daily_bar else 0,
+                        'change_pct': round(change_pct, 2),
+                        'high': float(snapshot.daily_bar.high) if snapshot.daily_bar else 0,
+                        'low': float(snapshot.daily_bar.low) if snapshot.daily_bar else 0,
                     }
                     results.append(data)
             except Exception as e:
