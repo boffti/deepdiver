@@ -1,4 +1,4 @@
-from google.adk.tools import tool
+from google.adk.tools import FunctionTool
 from app.extensions import supabase
 import requests
 import json
@@ -6,8 +6,7 @@ import os
 from datetime import datetime
 from polygon import RESTClient
 
-@tool
-def log_journal(agent: str, category: str, content: str) -> str:
+def _log_journal(agent: str, category: str, content: str) -> str:
     """Logs an event to the cloud database (Supabase).
     
     Args:
@@ -32,8 +31,7 @@ def log_journal(agent: str, category: str, content: str) -> str:
         print(f"[Log Error] {e}")
         return f"Log failed: {e}"
 
-@tool
-def check_market_status() -> str:
+def _check_market_status() -> str:
     """Checks if the US stock market is currently open.
     
     Returns:
@@ -56,8 +54,7 @@ def check_market_status() -> str:
     status = "OPEN" if is_weekday and is_market_hours else "CLOSED"
     return f"Market is {status} (Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')})"
 
-@tool
-def fetch_market_data(tickers: str) -> str:
+def _fetch_market_data(tickers: str) -> str:
     """Fetches real-time price and technical data from Polygon.io.
 
     Args:
@@ -98,8 +95,7 @@ def fetch_market_data(tickers: str) -> str:
     except Exception as e:
         return f"Error fetching market data: {str(e)}"
 
-@tool
-def write_scan_results(market_regime: str, stocks_json: str, metadata_json: str = "{}") -> str:
+def _write_scan_results(market_regime: str, stocks_json: str, metadata_json: str = "{}") -> str:
     """Writes CANSLIM scan results to Supabase.
 
     Args:
@@ -141,8 +137,7 @@ def write_scan_results(market_regime: str, stocks_json: str, metadata_json: str 
     except Exception as e:
         return f"Error saving scan: {str(e)}"
 
-@tool
-def get_current_positions() -> str:
+def _get_current_positions() -> str:
     """Retrieves all open positions from Supabase.
 
     Returns:
@@ -162,8 +157,7 @@ def get_current_positions() -> str:
     except Exception as e:
         return f"Error fetching positions: {str(e)}"
 
-@tool
-def get_watchlist() -> str:
+def _get_watchlist() -> str:
     """Gets stocks currently being monitored.
 
     Returns:
@@ -180,8 +174,7 @@ def get_watchlist() -> str:
     except Exception as e:
         return f"Error fetching watchlist: {str(e)}"
 
-@tool
-def update_position(position_id: int, updates_json: str) -> str:
+def _update_position(position_id: int, updates_json: str) -> str:
     """Updates a position (change stop, close, etc.).
 
     Args:
@@ -207,8 +200,7 @@ def update_position(position_id: int, updates_json: str) -> str:
     except Exception as e:
         return f"Error updating position: {str(e)}"
 
-@tool
-def check_alerts() -> str:
+def _check_alerts() -> str:
     """Checks if any price alerts have triggered.
 
     Returns:
@@ -229,8 +221,7 @@ def check_alerts() -> str:
     except Exception as e:
         return f"Error checking alerts: {str(e)}"
 
-@tool
-def add_to_watchlist(ticker: str, status: str, score: float = 50.0) -> str:
+def _add_to_watchlist(ticker: str, status: str, score: float = 50.0) -> str:
     """Adds or updates a stock in the watchlist.
 
     Args:
@@ -257,3 +248,14 @@ def add_to_watchlist(ticker: str, status: str, score: float = 50.0) -> str:
 
     except Exception as e:
         return f"Error adding to watchlist: {str(e)}"
+
+# Wrap all functions with FunctionTool for google-adk compatibility
+log_journal = FunctionTool(_log_journal)
+check_market_status = FunctionTool(_check_market_status)
+fetch_market_data = FunctionTool(_fetch_market_data)
+write_scan_results = FunctionTool(_write_scan_results)
+get_current_positions = FunctionTool(_get_current_positions)
+get_watchlist = FunctionTool(_get_watchlist)
+update_position = FunctionTool(_update_position)
+check_alerts = FunctionTool(_check_alerts)
+add_to_watchlist = FunctionTool(_add_to_watchlist)
