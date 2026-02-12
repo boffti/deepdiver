@@ -18,7 +18,8 @@ WARNINGS=0
 echo "📁 Checking required files..."
 REQUIRED_FILES=(
     "app.py"
-    "requirements.txt"
+    "pyproject.toml"
+    "uv.lock"
     "run.sh"
     ".env.example"
     ".gitignore"
