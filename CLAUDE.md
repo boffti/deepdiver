@@ -62,8 +62,6 @@ Dependencies are defined in `pyproject.toml`, NOT `requirements.txt`.
 ./verify.sh
 ```
 
-**Note**: The verify.sh script currently checks for deprecated Google Sheets variables - this will be fixed.
-
 ### Manual Testing
 
 ```bash
@@ -84,8 +82,10 @@ uv run python -c "from app.tasks import task_morning_briefing; task_morning_brie
 
 Required environment variables in `.env`:
 
-**Market Data API:**
-- `POLYGON_API_KEY` - Polygon.io API key for real-time market data
+**Market Data APIs:**
+- `ALPACA_API_KEY` - Alpaca API key for real-time market data and trading
+- `ALPACA_SECRET_KEY` - Alpaca secret key for authentication
+- `FINNHUB_API_KEY` - Finnhub API key for additional market data and fundamentals
 
 **Supabase (Cloud Database):**
 - `SUPABASE_URL` - Supabase project URL
@@ -141,7 +141,7 @@ app/
 **Complete Data Pipeline:**
 
 ```
-1. Polygon.io API
+1. Alpaca/Finnhub APIs
    ↓ (fetch_market_data tool)
 2. Wilson Agent analyzes data
    ↓ (write_scan_results tool)
@@ -151,7 +151,7 @@ app/
 ```
 
 **Key Details:**
-- Wilson fetches real-time data from Polygon.io every morning at 8:30 AM ET
+- Wilson fetches real-time data from Alpaca and Finnhub every morning at 8:30 AM ET
 - Wilson analyzes stocks using CANSLIM criteria autonomously
 - Results are written to Supabase `scans` and `scan_stocks` tables
 - Dashboard subscribes to Supabase Realtime via WebSocket
@@ -184,7 +184,7 @@ cost = shares * pivot
    - Uses pytz for timezone handling
 
 3. **`fetch_market_data(tickers)`**
-   - Fetches real-time price data from Polygon.io
+   - Fetches real-time price data from Alpaca and Finnhub
    - Returns JSON with price, volume, change %, high, low
 
 4. **`write_scan_results(market_regime, stocks_json, metadata_json)`**
@@ -491,7 +491,8 @@ uv sync
   - Install: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 **Required APIs:**
-- **Polygon.io**: Real-time market data (requires paid plan for real-time data)
+- **Alpaca**: Real-time market data and trading API (free tier available with live data)
+- **Finnhub**: Additional market data and fundamental analysis (free tier available)
 - **Supabase**: Cloud database and real-time subscriptions (free tier available)
 - **OpenRouter**: LLM access (supports multiple providers, pay-per-use)
 
@@ -501,7 +502,8 @@ uv sync
 - `flask-cors>=6.0.2` - CORS support
 - `google-adk>=1.25.0` - Agent framework
 - `supabase>=2.28.0` - Cloud database client
-- `polygon-api-client>=1.16.3` - Market data API
+- `alpaca-py` - Alpaca trading and market data API
+- `finnhub-python` - Finnhub market data API
 - `openai>=2.20.0` - OpenRouter client compatibility
 - `pandas-market-calendars>=5.3.0` - Market hours detection
 - `python-dotenv>=1.2.1` - Environment variable loading
@@ -587,11 +589,11 @@ For production deployment:
 - Test agent manually: `uv run python -c "from app.agents.wilson import wilson; print(wilson.run('test'))"`
 - Check OpenRouter dashboard for API quota/errors
 
-**Polygon.io errors:**
-- Verify `POLYGON_API_KEY` is set and valid
-- Check API quota on Polygon.io dashboard
-- Free tier has rate limits and delayed data
-- Real-time data requires paid plan
+**Alpaca/Finnhub errors:**
+- Verify `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, and `FINNHUB_API_KEY` are set and valid
+- Check API quota on Alpaca and Finnhub dashboards
+- Alpaca free tier includes live market data (paper trading account)
+- Finnhub free tier has rate limits (60 calls/minute)
 
 **uv command not found:**
 - Install uv: `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -604,11 +606,6 @@ For production deployment:
 - Verify .env file exists and is valid
 
 ## Known Issues
-
-**verify.sh outdated:**
-- Script still checks for deprecated `GOOGLE_SHEET_ID` and `GOG_ACCOUNT` variables
-- These checks should be removed and replaced with Polygon.io and Supabase checks
-- File: `verify.sh` lines 82-89
 
 **run.sh outdated:**
 - Script validates Google Sheets environment variables that are no longer used
