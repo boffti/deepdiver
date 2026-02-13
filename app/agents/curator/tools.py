@@ -424,6 +424,11 @@ def _update_trading_universe(ticker: str, data_json: str) -> str:
                 upsert_data['deactivated_at'] = datetime.utcnow().isoformat()
         if 'notes' in data:
             upsert_data['notes'] = data['notes']
+        if 'involvement_level' in data:
+            valid_levels = {'research_ai', 'build_ai', 'leverage_ai', 'use_ai'}
+            level = data['involvement_level']
+            if level in valid_levels:
+                upsert_data['involvement_level'] = level
 
         # Update last_mention if mentioned in recent scan
         if data.get('score', 0) > 0:

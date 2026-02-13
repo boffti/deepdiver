@@ -245,3 +245,66 @@ class TestScanStockForAi:
         mock_llm.assert_not_called()
         assert result["involvement_level"] == "build_ai"
         assert result["score"] == 90
+
+
+class TestUpdateTradingUniverse:
+    """Tests for _update_trading_universe tool."""
+
+    def test_involvement_level_included_in_upsert(self):
+        """involvement_level from data_json must be written to Supabase."""
+        from app.agents.curator.tools import _update_trading_universe
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        data_json = json.dumps({
+            "company_name": "NVIDIA Corporation",
+            "sector": "Technology",
+            "category": "ai_chip",
+            "involvement_level": "build_ai",
+            "score": 90,
+            "is_active": True,
+            "notes": "Pure AI chip play"
+        })
+
+        with patch("app.agents.curator.tools.supabase", mock_supabase):
+            result = _update_trading_universe("NVDA", data_json)
+
+        call_args = mock_supabase.table.return_value.upsert.call_args[0][0]
+        assert call_args["involvement_level"] == "build_ai"
+        assert "Updated NVDA" in result
+
+    def test_missing_involvement_level_does_not_error(self):
+        """Upsert should succeed even if involvement_level not in data_json."""
+        from app.agents.curator.tools import _update_trading_universe
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        data_json = json.dumps({
+            "company_name": "Test Corp",
+            "score": 30,
+        })
+
+        with patch("app.agents.curator.tools.supabase", mock_supabase):
+            result = _update_trading_universe("TEST", data_json)
+
+        assert "Error" not in result
+
+    def test_invalid_involvement_level_is_rejected(self):
+        """Invalid involvement_level values must not be written to Supabase."""
+        from app.agents.curator.tools import _update_trading_universe
+
+        mock_supabase = MagicMock()
+        mock_supabase.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+
+        data_json = json.dumps({
+            "involvement_level": "definitely_not_valid",
+            "score": 50,
+        })
+
+        with patch("app.agents.curator.tools.supabase", mock_supabase):
+            _update_trading_universe("TEST", data_json)
+
+        call_args = mock_supabase.table.return_value.upsert.call_args[0][0]
+        assert "involvement_level" not in call_args
