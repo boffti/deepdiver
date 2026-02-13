@@ -70,7 +70,7 @@ def _fetch_edgar_ai_mentions(ticker: str, company_name: str) -> dict:
         "forms": "10-K",
         "dateRange": "custom",
         "startdt": "2023-01-01",
-        "enddt": "2026-12-31",
+        "enddt": datetime.now().strftime("%Y-%m-%d"),
         "entity": company_name,
     }
 
@@ -90,15 +90,22 @@ def _fetch_edgar_ai_mentions(ticker: str, company_name: str) -> dict:
         snippets = []
         for hit in hits[:5]:
             highlights = hit.get("highlight", {}).get("file_contents", [])
-            if highlights:
-                snippet = highlights[0].replace("<em>", "").replace("</em>", "")
-                snippets.append(snippet[:300])
+            if not isinstance(highlights, list) or not highlights:
+                continue
+            snippet = highlights[0].replace("<em>", "").replace("</em>", "")
+            snippets.append(snippet[:300])
 
         return {
             "count": total,
             "snippets": snippets,
         }
 
+    except requests.exceptions.HTTPError as e:
+        return {
+            "count": 0,
+            "snippets": [],
+            "error": f"HTTP {e.response.status_code if e.response else 'unknown'}: {str(e)}",
+        }
     except Exception as e:
         return {
             "count": 0,
