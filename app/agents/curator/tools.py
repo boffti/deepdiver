@@ -115,48 +115,51 @@ def _fetch_edgar_ai_mentions(ticker: str, company_name: str) -> dict:
 
 
 def _scan_stock_for_ai(ticker: str) -> str:
-    """Scans a stock for AI involvement using 2-stage detection.
+    """Scans a stock for AI involvement using 3-stage detection.
 
-    Stage 1: Keyword scoring (deterministic)
-    Stage 2: LLM validation for borderline scores (30-70)
+    Stage 1: Keyword scoring (Finnhub profile + news)
+    Stage 2: SEC EDGAR fetch (10-K filing snippets, always runs)
+    Stage 3: LLM classification (only for borderline scores 30-70)
 
     Args:
         ticker: Stock symbol to scan
 
     Returns:
-        JSON string with scan results:
-        {
-            'ticker': str,
-            'company_name': str,
-            'sector': str,
-            'has_ai': bool,
-            'score': int (0-100),
-            'category': str,
-            'evidence': str
-        }
+        JSON string with scan results including involvement_level
     """
     ticker = ticker.upper().strip()
 
     try:
-        # Stage 1: Keyword Scoring
+        # Stage 1: Keyword scoring (Finnhub)
         result = _keyword_scoring(ticker)
 
-        # Stage 2: LLM Validation (only for borderline scores)
-        if 30 <= result['score'] <= 70:
-            edgar_data = _fetch_edgar_ai_mentions(ticker, result.get('company_name', ticker))
-            llm_result = _llm_validation(ticker, result, edgar_data)
-            result['score'] = llm_result['adjusted_score']
-            result['category'] = llm_result['category']
-            result['evidence'] += f" | LLM: {llm_result['reasoning']}"
+        # Stage 2: EDGAR fetch (always — cheap GET request)
+        edgar_data = _fetch_edgar_ai_mentions(ticker, result.get("company_name", ticker))
 
+        # Stage 3: LLM classification (borderline only)
+        if 30 <= result["score"] <= 70:
+            llm_result = _llm_validation(ticker, result, edgar_data)
+            result["score"] = llm_result["adjusted_score"]
+            result["category"] = llm_result["category"]
+            result["involvement_level"] = llm_result["involvement_level"]
+            result["evidence"] += f" | LLM: {llm_result['reasoning']}"
+        elif result["score"] > 70:
+            # High confidence AI company — skip LLM cost
+            result["involvement_level"] = "build_ai"
+        else:
+            # Low score — minimal AI involvement
+            result["involvement_level"] = "use_ai"
+
+        result["edgar_count"] = edgar_data.get("count", 0)
         return json.dumps(result, indent=2)
 
     except Exception as e:
         return json.dumps({
-            'ticker': ticker,
-            'error': str(e),
-            'has_ai': False,
-            'score': 0
+            "ticker": ticker,
+            "error": str(e),
+            "has_ai": False,
+            "score": 0,
+            "involvement_level": "use_ai",
         })
 
 

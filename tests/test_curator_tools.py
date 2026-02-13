@@ -160,3 +160,88 @@ class TestLlmValidation:
             result = _llm_validation("TEST", stage1, edgar)
 
         assert 0 <= result["adjusted_score"] <= 100
+
+
+class TestScanStockForAi:
+    """Integration tests for _scan_stock_for_ai orchestrator."""
+
+    def test_result_always_has_involvement_level(self):
+        """Every scan result must include involvement_level regardless of score."""
+        from app.agents.curator.tools import _scan_stock_for_ai
+
+        with patch("app.agents.curator.tools._keyword_scoring") as mock_kw, \
+             patch("app.agents.curator.tools._fetch_edgar_ai_mentions") as mock_edgar:
+
+            mock_kw.return_value = {
+                "ticker": "MCD",
+                "company_name": "McDonald's Corporation",
+                "sector": "Consumer",
+                "has_ai": False,
+                "score": 5,
+                "category": "ai_beneficiary",
+                "evidence": ""
+            }
+            mock_edgar.return_value = {"count": 0, "snippets": []}
+
+            raw = _scan_stock_for_ai("MCD")
+            result = json.loads(raw)
+
+        assert "involvement_level" in result
+        assert result["involvement_level"] == "use_ai"
+
+    def test_borderline_score_triggers_llm(self):
+        """Score 30-70 should trigger LLM validation."""
+        from app.agents.curator.tools import _scan_stock_for_ai
+
+        with patch("app.agents.curator.tools._keyword_scoring") as mock_kw, \
+             patch("app.agents.curator.tools._fetch_edgar_ai_mentions") as mock_edgar, \
+             patch("app.agents.curator.tools._llm_validation") as mock_llm:
+
+            mock_kw.return_value = {
+                "ticker": "ORCL",
+                "company_name": "Oracle Corporation",
+                "sector": "Technology",
+                "has_ai": True,
+                "score": 50,
+                "category": "ai_cloud",
+                "evidence": "Description: 'ai-powered'"
+            }
+            mock_edgar.return_value = {"count": 2, "snippets": ["We offer AI cloud services."]}
+            mock_llm.return_value = {
+                "involvement_level": "leverage_ai",
+                "category": "ai_cloud",
+                "adjusted_score": 55,
+                "reasoning": "Oracle uses AI in cloud offerings."
+            }
+
+            raw = _scan_stock_for_ai("ORCL")
+            result = json.loads(raw)
+
+        mock_llm.assert_called_once()
+        assert result["involvement_level"] == "leverage_ai"
+
+    def test_high_score_skips_llm_sets_build_ai(self):
+        """Score > 70 should skip LLM and set involvement_level to build_ai."""
+        from app.agents.curator.tools import _scan_stock_for_ai
+
+        with patch("app.agents.curator.tools._keyword_scoring") as mock_kw, \
+             patch("app.agents.curator.tools._fetch_edgar_ai_mentions") as mock_edgar, \
+             patch("app.agents.curator.tools._llm_validation") as mock_llm:
+
+            mock_kw.return_value = {
+                "ticker": "NVDA",
+                "company_name": "NVIDIA Corporation",
+                "sector": "Technology",
+                "has_ai": True,
+                "score": 90,
+                "category": "ai_chip",
+                "evidence": "Description: 'ai chip' | Description: 'gpu inference'"
+            }
+            mock_edgar.return_value = {"count": 10, "snippets": []}
+
+            raw = _scan_stock_for_ai("NVDA")
+            result = json.loads(raw)
+
+        mock_llm.assert_not_called()
+        assert result["involvement_level"] == "build_ai"
+        assert result["score"] == 90
