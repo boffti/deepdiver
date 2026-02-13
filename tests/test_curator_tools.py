@@ -62,3 +62,101 @@ class TestFetchEdgarAiMentions:
 
         assert result["count"] == 0
         assert "error" in result
+
+
+class TestLlmValidation:
+    """Tests for _llm_validation helper."""
+
+    def test_returns_dict_with_all_required_keys(self):
+        """LLM validation result must have all four expected keys."""
+        from app.agents.curator.tools import _llm_validation
+
+        stage1 = {
+            "company_name": "NVIDIA Corporation",
+            "sector": "Technology",
+            "score": 50,
+            "evidence": "Description: 'gpu inference'",
+            "category": "ai_chip",
+        }
+        edgar = {"count": 3, "snippets": ["We design AI accelerators for data centers."]}
+
+        mock_completion = MagicMock()
+        mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.content = json.dumps({
+            "involvement_level": "build_ai",
+            "category": "ai_chip",
+            "adjusted_score": 65,
+            "reasoning": "NVIDIA builds AI chips as core business."
+        })
+
+        with patch("openai.OpenAI") as MockOpenAI:
+            MockOpenAI.return_value.chat.completions.create.return_value = mock_completion
+            result = _llm_validation("NVDA", stage1, edgar)
+
+        assert "involvement_level" in result
+        assert "category" in result
+        assert "adjusted_score" in result
+        assert "reasoning" in result
+
+    def test_involvement_level_is_valid_enum(self):
+        """involvement_level must be one of the four valid values."""
+        from app.agents.curator.tools import _llm_validation
+
+        stage1 = {"company_name": "Test Corp", "sector": "Tech", "score": 45, "evidence": "", "category": "ai_beneficiary"}
+        edgar = {"count": 0, "snippets": []}
+
+        mock_completion = MagicMock()
+        mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.content = json.dumps({
+            "involvement_level": "leverage_ai",
+            "category": "ai_beneficiary",
+            "adjusted_score": 40,
+            "reasoning": "Uses AI tools."
+        })
+
+        with patch("openai.OpenAI") as MockOpenAI:
+            MockOpenAI.return_value.chat.completions.create.return_value = mock_completion
+            result = _llm_validation("TEST", stage1, edgar)
+
+        valid_levels = {"research_ai", "build_ai", "leverage_ai", "use_ai"}
+        assert result["involvement_level"] in valid_levels
+
+    def test_handles_malformed_llm_response_gracefully(self):
+        """Should return safe defaults if LLM returns non-JSON."""
+        from app.agents.curator.tools import _llm_validation
+
+        stage1 = {"company_name": "Test Corp", "sector": "Tech", "score": 45, "evidence": "", "category": "ai_beneficiary"}
+        edgar = {"count": 0, "snippets": []}
+
+        mock_completion = MagicMock()
+        mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.content = "Sorry, I cannot help with that."
+
+        with patch("openai.OpenAI") as MockOpenAI:
+            MockOpenAI.return_value.chat.completions.create.return_value = mock_completion
+            result = _llm_validation("TEST", stage1, edgar)
+
+        assert "involvement_level" in result
+        assert result["adjusted_score"] == stage1["score"]
+
+    def test_score_adjustment_is_bounded(self):
+        """adjusted_score must stay within 0-100 even if LLM returns out-of-range."""
+        from app.agents.curator.tools import _llm_validation
+
+        stage1 = {"company_name": "Test Corp", "sector": "Tech", "score": 95, "evidence": "", "category": "ai_chip"}
+        edgar = {"count": 0, "snippets": []}
+
+        mock_completion = MagicMock()
+        mock_completion.choices = [MagicMock()]
+        mock_completion.choices[0].message.content = json.dumps({
+            "involvement_level": "build_ai",
+            "category": "ai_chip",
+            "adjusted_score": 999,
+            "reasoning": "Test."
+        })
+
+        with patch("openai.OpenAI") as MockOpenAI:
+            MockOpenAI.return_value.chat.completions.create.return_value = mock_completion
+            result = _llm_validation("TEST", stage1, edgar)
+
+        assert 0 <= result["adjusted_score"] <= 100

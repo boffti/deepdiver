@@ -143,7 +143,8 @@ def _scan_stock_for_ai(ticker: str) -> str:
 
         # Stage 2: LLM Validation (only for borderline scores)
         if 30 <= result['score'] <= 70:
-            llm_result = _llm_validation(ticker, result)
+            edgar_data = _fetch_edgar_ai_mentions(ticker, result.get('company_name', ticker))
+            llm_result = _llm_validation(ticker, result, edgar_data)
             result['score'] = llm_result['adjusted_score']
             result['category'] = llm_result['category']
             result['evidence'] += f" | LLM: {llm_result['reasoning']}"
@@ -260,42 +261,111 @@ def _categorize_stock(evidence: list) -> str:
     return 'ai_beneficiary'
 
 
-def _llm_validation(ticker: str, stage1_result: dict) -> dict:
-    """Stage 2: LLM validation for borderline scores (30-70)."""
+def _llm_validation(ticker: str, stage1_result: dict, edgar_data: dict) -> dict:
+    """Stage 2: LLM classification for involvement_level + category refinement.
 
-    # This would call the LLM to validate
-    # For now, return stage1 result unchanged
-    # TODO: Implement LLM validation call via OpenRouter
+    Calls OpenRouter (via openai SDK) to classify:
+    - involvement_level: research_ai | build_ai | leverage_ai | use_ai
+    - category: ai_chip | ai_software | ai_cloud | ai_infrastructure | ai_beneficiary
+    - adjusted_score: keyword score +/- adjustment based on context
+    - reasoning: one-sentence explanation
 
-    prompt = f"""Analyze this company's AI involvement:
+    Only called for borderline keyword scores (30-70). Safe defaults returned
+    on any error.
+
+    Args:
+        ticker: Stock symbol
+        stage1_result: Output from _keyword_scoring
+        edgar_data: Output from _fetch_edgar_ai_mentions
+
+    Returns:
+        dict with involvement_level, category, adjusted_score, reasoning
+    """
+    from openai import OpenAI
+
+    SAFE_DEFAULT = {
+        "involvement_level": "use_ai",
+        "category": stage1_result.get("category", "ai_beneficiary"),
+        "adjusted_score": stage1_result["score"],
+        "reasoning": "LLM validation unavailable — using keyword score.",
+    }
+
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        return SAFE_DEFAULT
+
+    edgar_snippets = "\n".join(edgar_data.get("snippets", [])[:3]) or "No SEC filings found."
+    edgar_count = edgar_data.get("count", 0)
+
+    prompt = f"""You are classifying a stock's relationship to AI for a trading system.
 
 Company: {stage1_result['company_name']} ({ticker})
 Sector: {stage1_result.get('sector', 'Unknown')}
-Keyword Score: {stage1_result['score']}
-Evidence: {stage1_result['evidence']}
+Keyword Evidence: {stage1_result.get('evidence', 'None')}
+Keyword Score: {stage1_result['score']} / 100
+SEC 10-K AI Mentions: {edgar_count} filing(s) found
+SEC Snippets:
+{edgar_snippets}
 
-Questions:
-1. Is this a genuine AI company? (yes/no)
-2. What's the primary AI category: ai_chip, ai_software, ai_cloud, ai_infrastructure, or ai_beneficiary?
-3. Adjust score between {stage1_result['score']-20} and {stage1_result['score']+20} based on context.
-4. Provide brief reasoning (1 sentence).
+Classify this company using BOTH fields:
 
-Return JSON:
+involvement_level — choose one:
+- "research_ai": Core business IS AI research (dedicated AI labs, publishes AI papers, AI patents are primary IP)
+- "build_ai": Builds and SELLS AI products as primary business (AI chips, LLM platforms, AI SaaS)
+- "leverage_ai": Uses AI to SIGNIFICANTLY enhance existing products or margins
+- "use_ai": Uses off-the-shelf AI tools operationally
+
+category — choose one:
+- "ai_chip": Designs/manufactures AI processors (GPUs, TPUs, neural chips)
+- "ai_software": Builds AI applications, LLMs, or AI-native platforms
+- "ai_cloud": Provides AI infrastructure (training, inference, cloud AI services)
+- "ai_infrastructure": Enables AI (data centers, networking, storage for AI workloads)
+- "ai_beneficiary": Benefits from AI adoption but AI isn't core to product
+
+adjusted_score: Start from {stage1_result['score']}, adjust by at most +/-20.
+
+Return ONLY valid JSON, no markdown:
 {{
-  "is_genuine_ai": bool,
-  "category": str,
-  "adjusted_score": int,
-  "reasoning": str
-}}
-"""
+  "involvement_level": "...",
+  "category": "...",
+  "adjusted_score": <integer 0-100>,
+  "reasoning": "<one sentence>"
+}}"""
 
-    # For MVP, skip LLM validation and return stage1 result
-    # TODO: Add actual LLM call here
-    return {
-        'adjusted_score': stage1_result['score'],
-        'category': stage1_result['category'],
-        'reasoning': 'LLM validation not implemented yet - using keyword scoring'
-    }
+    try:
+        client = OpenAI(
+            api_key=openrouter_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+        response = client.chat.completions.create(
+            model="google/gemini-flash-1.5",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=200,
+        )
+        raw = response.choices[0].message.content.strip()
+
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+
+        result = json.loads(raw)
+
+        valid_levels = {"research_ai", "build_ai", "leverage_ai", "use_ai"}
+        valid_categories = {"ai_chip", "ai_software", "ai_cloud", "ai_infrastructure", "ai_beneficiary"}
+
+        return {
+            "involvement_level": result.get("involvement_level") if result.get("involvement_level") in valid_levels else "use_ai",
+            "category": result.get("category") if result.get("category") in valid_categories else SAFE_DEFAULT["category"],
+            "adjusted_score": max(0, min(100, int(result.get("adjusted_score", stage1_result["score"])))),
+            "reasoning": str(result.get("reasoning", ""))[:500],
+        }
+
+    except Exception as e:
+        SAFE_DEFAULT["reasoning"] = f"LLM error: {str(e)[:100]}"
+        return SAFE_DEFAULT
 
 
 def _update_trading_universe(ticker: str, data_json: str) -> str:
