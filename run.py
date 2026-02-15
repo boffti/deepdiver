@@ -1,12 +1,9 @@
 from app import create_app
-from dotenv import load_dotenv
-import os
-
-# Load environment variables
-load_dotenv()
+from app.config import get_settings
 
 app = create_app()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
+    settings = get_settings()
+    port = settings.port
     app.run(host="0.0.0.0", port=port, debug=True)

@@ -1,6 +1,6 @@
 from flask_apscheduler import APScheduler
 from supabase import create_client, Client
-import os
+from app.config import get_settings, get_supabase_client
 
 # Scheduler Instance
 scheduler = APScheduler()
@@ -23,9 +23,19 @@ def init_supabase(app):
         print("Supabase credentials not found. Skipping initialization.")
 
 
+def get_supabase():
+    """Get Supabase client, falling back to config client if Flask app not initialized."""
+    global supabase
+    if supabase is not None:
+        return supabase
+    # Fallback to config client
+    return get_supabase_client()
+
+
 def get_supabase_config():
     """Get Supabase config for frontend."""
+    settings = get_settings()
     return {
-        "url": os.getenv("SUPABASE_URL"),
-        "anon_key": os.getenv("SUPABASE_ANON_KEY"),
+        "url": settings.supabase_url,
+        "anon_key": settings.supabase_anon_key.get_secret_value(),
     }

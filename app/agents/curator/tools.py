@@ -6,42 +6,86 @@ from the Russell 3000 index.
 """
 
 from google.adk.tools import FunctionTool
-from app.extensions import supabase
+from app.extensions import get_supabase
+from app.config import get_settings
 import requests
 import json
-import os
 from datetime import datetime, timedelta
 
 
 # AI Keyword Taxonomy
 AI_KEYWORDS = {
-    'tier1': {  # Strong AI signals (10 points each)
-        'keywords': [
-            'artificial intelligence', 'machine learning', 'deep learning',
-            'neural network', 'large language model', 'llm', 'generative ai',
-            'gpt', 'transformer model', 'ai chip', 'gpu inference', 'nvidia gpu',
-            'neural processor', 'tpu', 'ai accelerator'
+    "tier1": {  # Strong AI signals (10 points each)
+        "keywords": [
+            "artificial intelligence",
+            "machine learning",
+            "deep learning",
+            "neural network",
+            "large language model",
+            "llm",
+            "generative ai",
+            "gpt",
+            "transformer model",
+            "ai chip",
+            "gpu inference",
+            "nvidia gpu",
+            "neural processor",
+            "tpu",
+            "ai accelerator",
         ],
-        'categories': {
-            'ai_chip': ['gpu', 'ai chip', 'neural processor', 'tpu', 'ai accelerator', 'nvidia', 'cuda'],
-            'ai_software': ['llm', 'generative ai', 'ai platform', 'ai agent', 'chatgpt', 'gpt'],
-            'ai_cloud': ['ai inference', 'model training', 'ai infrastructure', 'gpu cloud']
-        }
+        "categories": {
+            "ai_chip": [
+                "gpu",
+                "ai chip",
+                "neural processor",
+                "tpu",
+                "ai accelerator",
+                "nvidia",
+                "cuda",
+            ],
+            "ai_software": [
+                "llm",
+                "generative ai",
+                "ai platform",
+                "ai agent",
+                "chatgpt",
+                "gpt",
+            ],
+            "ai_cloud": [
+                "ai inference",
+                "model training",
+                "ai infrastructure",
+                "gpu cloud",
+            ],
+        },
     },
-    'tier2': {  # Moderate signals (5 points each)
-        'keywords': [
-            'openai partnership', 'anthropic', 'ai partnership',
-            'data center', 'cloud ai', 'ai-powered', 'ai integration',
-            'automation', 'predictive analytics', 'computer vision',
-            'natural language processing', 'nlp', 'ai model'
+    "tier2": {  # Moderate signals (5 points each)
+        "keywords": [
+            "openai partnership",
+            "anthropic",
+            "ai partnership",
+            "data center",
+            "cloud ai",
+            "ai-powered",
+            "ai integration",
+            "automation",
+            "predictive analytics",
+            "computer vision",
+            "natural language processing",
+            "nlp",
+            "ai model",
         ]
     },
-    'tier3': {  # Weak signals (2 points each) - optional, often too noisy
-        'keywords': [
-            'algorithm', 'data science', 'analytics platform',
-            'intelligent', 'smart technology', 'automated'
+    "tier3": {  # Weak signals (2 points each) - optional, often too noisy
+        "keywords": [
+            "algorithm",
+            "data science",
+            "analytics platform",
+            "intelligent",
+            "smart technology",
+            "automated",
         ]
-    }
+    },
 }
 
 
@@ -79,7 +123,7 @@ def _fetch_edgar_ai_mentions(ticker: str, company_name: str) -> dict:
         response = requests.get(
             url,
             timeout=15,
-            headers={"User-Agent": "DeepDiver/1.0 research@example.com"}
+            headers={"User-Agent": "DeepDiver/1.0 research@example.com"},
         )
         response.raise_for_status()
         data = response.json()
@@ -134,7 +178,9 @@ def _scan_stock_for_ai(ticker: str) -> str:
         result = _keyword_scoring(ticker)
 
         # Stage 2: EDGAR fetch (always — cheap GET request)
-        edgar_data = _fetch_edgar_ai_mentions(ticker, result.get("company_name", ticker))
+        edgar_data = _fetch_edgar_ai_mentions(
+            ticker, result.get("company_name", ticker)
+        )
 
         # Stage 3: LLM classification (borderline only)
         if 30 <= result["score"] <= 70:
@@ -154,19 +200,22 @@ def _scan_stock_for_ai(ticker: str) -> str:
         return json.dumps(result, indent=2)
 
     except Exception as e:
-        return json.dumps({
-            "ticker": ticker,
-            "error": str(e),
-            "has_ai": False,
-            "score": 0,
-            "involvement_level": "use_ai",
-        })
+        return json.dumps(
+            {
+                "ticker": ticker,
+                "error": str(e),
+                "has_ai": False,
+                "score": 0,
+                "involvement_level": "use_ai",
+            }
+        )
 
 
 def _keyword_scoring(ticker: str) -> dict:
     """Stage 1: Keyword-based scoring using Finnhub company profile + news."""
 
-    finnhub_api_key = os.getenv('FINNHUB_API_KEY')
+    settings = get_settings()
+    finnhub_api_key = settings.finnhub_api_key
     if not finnhub_api_key:
         raise Exception("FINNHUB_API_KEY not set")
 
@@ -183,17 +232,17 @@ def _keyword_scoring(ticker: str) -> dict:
         profile_data = profile_response.json()
 
         if profile_data:
-            company_name = profile_data.get('name', ticker)
-            sector = profile_data.get('finnhubIndustry', None)
-            description = profile_data.get('description', '').lower()
+            company_name = profile_data.get("name", ticker)
+            sector = profile_data.get("finnhubIndustry", None)
+            description = profile_data.get("description", "").lower()
 
             # Score company description
-            for keyword in AI_KEYWORDS['tier1']['keywords']:
+            for keyword in AI_KEYWORDS["tier1"]["keywords"]:
                 if keyword in description:
                     score += 10
                     evidence.append(f"Description: '{keyword}'")
 
-            for keyword in AI_KEYWORDS['tier2']['keywords']:
+            for keyword in AI_KEYWORDS["tier2"]["keywords"]:
                 if keyword in description:
                     score += 5
                     evidence.append(f"Description: '{keyword}'")
@@ -203,25 +252,25 @@ def _keyword_scoring(ticker: str) -> dict:
 
     # Fetch recent news (last 7 days)
     try:
-        date_from = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        date_to = datetime.now().strftime('%Y-%m-%d')
+        date_from = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        date_to = datetime.now().strftime("%Y-%m-%d")
         news_url = f"https://finnhub.io/api/v1/company-news?symbol={ticker}&from={date_from}&to={date_to}&token={finnhub_api_key}"
         news_response = requests.get(news_url, timeout=10)
         news_data = news_response.json()
 
         # Limit to 10 most recent articles
         for article in news_data[:10]:
-            headline = article.get('headline', '').lower()
-            summary = article.get('summary', '').lower()
+            headline = article.get("headline", "").lower()
+            summary = article.get("summary", "").lower()
             text = f"{headline} {summary}"
 
-            for keyword in AI_KEYWORDS['tier1']['keywords']:
+            for keyword in AI_KEYWORDS["tier1"]["keywords"]:
                 if keyword in text:
                     score += 10
                     evidence.append(f"News: '{keyword}' in headline")
                     break  # Count once per article
 
-            for keyword in AI_KEYWORDS['tier2']['keywords']:
+            for keyword in AI_KEYWORDS["tier2"]["keywords"]:
                 if keyword in text:
                     score += 5
                     break
@@ -237,22 +286,22 @@ def _keyword_scoring(ticker: str) -> dict:
         category = _categorize_stock(evidence)
 
     return {
-        'ticker': ticker,
-        'company_name': company_name,
-        'sector': sector,
-        'has_ai': score >= 40,
-        'score': score,
-        'category': category or 'ai_beneficiary',
-        'evidence': ' | '.join(evidence[:5])  # Limit evidence length
+        "ticker": ticker,
+        "company_name": company_name,
+        "sector": sector,
+        "has_ai": score >= 40,
+        "score": score,
+        "category": category or "ai_beneficiary",
+        "evidence": " | ".join(evidence[:5]),  # Limit evidence length
     }
 
 
 def _categorize_stock(evidence: list) -> str:
     """Determine AI category based on evidence."""
 
-    evidence_text = ' '.join(evidence).lower()
+    evidence_text = " ".join(evidence).lower()
 
-    category_keywords = AI_KEYWORDS['tier1']['categories']
+    category_keywords = AI_KEYWORDS["tier1"]["categories"]
 
     # Check each category
     for category, keywords in category_keywords.items():
@@ -261,7 +310,7 @@ def _categorize_stock(evidence: list) -> str:
                 return category
 
     # Default category
-    return 'ai_beneficiary'
+    return "ai_beneficiary"
 
 
 def _llm_validation(ticker: str, stage1_result: dict, edgar_data: dict) -> dict:
@@ -293,19 +342,22 @@ def _llm_validation(ticker: str, stage1_result: dict, edgar_data: dict) -> dict:
         "reasoning": "LLM validation unavailable — using keyword score.",
     }
 
-    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    settings = get_settings()
+    openrouter_key = settings.openrouter_api_key.get_secret_value()
     if not openrouter_key:
         return safe_default
 
-    edgar_snippets = "\n".join(edgar_data.get("snippets", [])[:3]) or "No SEC filings found."
+    edgar_snippets = (
+        "\n".join(edgar_data.get("snippets", [])[:3]) or "No SEC filings found."
+    )
     edgar_count = edgar_data.get("count", 0)
 
     prompt = f"""You are classifying a stock's relationship to AI for a trading system.
 
-Company: {stage1_result['company_name']} ({ticker})
-Sector: {stage1_result.get('sector', 'Unknown')}
-Keyword Evidence: {stage1_result.get('evidence', 'None')}
-Keyword Score: {stage1_result['score']} / 100
+Company: {stage1_result["company_name"]} ({ticker})
+Sector: {stage1_result.get("sector", "Unknown")}
+Keyword Evidence: {stage1_result.get("evidence", "None")}
+Keyword Score: {stage1_result["score"]} / 100
 SEC 10-K AI Mentions: {edgar_count} filing(s) found
 SEC Snippets:
 {edgar_snippets}
@@ -325,7 +377,7 @@ category — choose one:
 - "ai_infrastructure": Enables AI (data centers, networking, storage for AI workloads)
 - "ai_beneficiary": Benefits from AI adoption but AI isn't core to product
 
-adjusted_score: Start from {stage1_result['score']}, adjust by at most +/-20.
+adjusted_score: Start from {stage1_result["score"]}, adjust by at most +/-20.
 
 Return ONLY valid JSON, no markdown:
 {{
@@ -359,17 +411,33 @@ Return ONLY valid JSON, no markdown:
         start_idx = raw.find("{")
         end_idx = raw.rfind("}")
         if start_idx >= 0 and end_idx > start_idx:
-            raw = raw[start_idx:end_idx + 1]
+            raw = raw[start_idx : end_idx + 1]
 
         result = json.loads(raw)
 
         valid_levels = {"research_ai", "build_ai", "leverage_ai", "use_ai"}
-        valid_categories = {"ai_chip", "ai_software", "ai_cloud", "ai_infrastructure", "ai_beneficiary"}
+        valid_categories = {
+            "ai_chip",
+            "ai_software",
+            "ai_cloud",
+            "ai_infrastructure",
+            "ai_beneficiary",
+        }
 
         return {
-            "involvement_level": result.get("involvement_level") if result.get("involvement_level") in valid_levels else "use_ai",
-            "category": result.get("category") if result.get("category") in valid_categories else safe_default["category"],
-            "adjusted_score": max(0, min(100, int(result.get("adjusted_score", stage1_result.get("score", 50))))),
+            "involvement_level": result.get("involvement_level")
+            if result.get("involvement_level") in valid_levels
+            else "use_ai",
+            "category": result.get("category")
+            if result.get("category") in valid_categories
+            else safe_default["category"],
+            "adjusted_score": max(
+                0,
+                min(
+                    100,
+                    int(result.get("adjusted_score", stage1_result.get("score", 50))),
+                ),
+            ),
             "reasoning": str(result.get("reasoning", ""))[:500],
         }
 
@@ -396,6 +464,7 @@ def _update_trading_universe(ticker: str, data_json: str) -> str:
     Returns:
         Confirmation message
     """
+    supabase = get_supabase()
     if not supabase:
         return "Error: Supabase not connected"
 
@@ -404,38 +473,35 @@ def _update_trading_universe(ticker: str, data_json: str) -> str:
         ticker = ticker.upper().strip()
 
         # Prepare upsert data
-        upsert_data = {
-            'ticker': ticker,
-            'last_scanned': datetime.utcnow().isoformat()
-        }
+        upsert_data = {"ticker": ticker, "last_scanned": datetime.utcnow().isoformat()}
 
         # Add optional fields
-        if 'company_name' in data:
-            upsert_data['company_name'] = data['company_name']
-        if 'sector' in data:
-            upsert_data['sector'] = data['sector']
-        if 'category' in data:
-            upsert_data['category'] = data['category']
-        if 'score' in data:
-            upsert_data['score'] = int(data['score'])
-        if 'is_active' in data:
-            upsert_data['is_active'] = bool(data['is_active'])
-            if not data['is_active']:
-                upsert_data['deactivated_at'] = datetime.utcnow().isoformat()
-        if 'notes' in data:
-            upsert_data['notes'] = data['notes']
-        if 'involvement_level' in data:
-            valid_levels = {'research_ai', 'build_ai', 'leverage_ai', 'use_ai'}
-            level = data['involvement_level']
+        if "company_name" in data:
+            upsert_data["company_name"] = data["company_name"]
+        if "sector" in data:
+            upsert_data["sector"] = data["sector"]
+        if "category" in data:
+            upsert_data["category"] = data["category"]
+        if "score" in data:
+            upsert_data["score"] = int(data["score"])
+        if "is_active" in data:
+            upsert_data["is_active"] = bool(data["is_active"])
+            if not data["is_active"]:
+                upsert_data["deactivated_at"] = datetime.utcnow().isoformat()
+        if "notes" in data:
+            upsert_data["notes"] = data["notes"]
+        if "involvement_level" in data:
+            valid_levels = {"research_ai", "build_ai", "leverage_ai", "use_ai"}
+            level = data["involvement_level"]
             if level in valid_levels:
-                upsert_data['involvement_level'] = level
+                upsert_data["involvement_level"] = level
 
         # Update last_mention if mentioned in recent scan
-        if data.get('score', 0) > 0:
-            upsert_data['last_mention'] = datetime.utcnow().isoformat()
+        if data.get("score", 0) > 0:
+            upsert_data["last_mention"] = datetime.utcnow().isoformat()
 
         # Upsert to Supabase
-        result = supabase.table('trading_universe').upsert(upsert_data).execute()
+        result = supabase.table("trading_universe").upsert(upsert_data).execute()
 
         return f"✓ Updated {ticker} in trading_universe (score: {data.get('score', 'N/A')}, category: {data.get('category', 'N/A')})"
 
@@ -459,45 +525,43 @@ def _get_trading_universe(filters_json: str = "{}") -> str:
     Returns:
         JSON string with list of matching stocks
     """
+    supabase = get_supabase()
     if not supabase:
-        return json.dumps({'error': 'Supabase not connected'})
+        return json.dumps({"error": "Supabase not connected"})
 
     try:
         filters = json.loads(filters_json)
 
         # Build query
-        query = supabase.table('trading_universe').select('*')
+        query = supabase.table("trading_universe").select("*")
 
         # Apply filters
-        if 'is_active' in filters:
-            query = query.eq('is_active', filters['is_active'])
+        if "is_active" in filters:
+            query = query.eq("is_active", filters["is_active"])
 
-        if 'min_score' in filters:
-            query = query.gte('score', filters['min_score'])
+        if "min_score" in filters:
+            query = query.gte("score", filters["min_score"])
 
-        if 'max_score' in filters:
-            query = query.lte('score', filters['max_score'])
+        if "max_score" in filters:
+            query = query.lte("score", filters["max_score"])
 
-        if 'category' in filters:
-            query = query.eq('category', filters['category'])
+        if "category" in filters:
+            query = query.eq("category", filters["category"])
 
         # Order by score descending
-        query = query.order('score', desc=True)
+        query = query.order("score", desc=True)
 
         # Limit results
-        limit = filters.get('limit', 100)
+        limit = filters.get("limit", 100)
         query = query.limit(limit)
 
         # Execute query
         result = query.execute()
 
-        return json.dumps({
-            'count': len(result.data),
-            'stocks': result.data
-        }, indent=2)
+        return json.dumps({"count": len(result.data), "stocks": result.data}, indent=2)
 
     except Exception as e:
-        return json.dumps({'error': str(e)})
+        return json.dumps({"error": str(e)})
 
 
 # Wrap functions with FunctionTool for google-adk compatibility

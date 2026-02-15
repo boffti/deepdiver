@@ -1,30 +1,32 @@
 from google.adk.tools import FunctionTool
-from app.extensions import supabase
+from app.extensions import get_supabase
+from app.config import get_settings
 import requests
 import json
-import os
 from datetime import datetime
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockSnapshotRequest
 
+
 def _log_journal(agent: str, category: str, content: str) -> str:
     """Logs an event to the cloud database (Supabase).
-    
+
     Args:
         agent: Name of the agent (e.g., 'Wilson', 'Scanner').
         category: Type of log (Trade, Error, Summary, Signal, Thinking).
         content: The message to log.
     """
+    supabase = get_supabase()
     if not supabase:
         print(f"[Fallback Log] {agent} | {category}: {content}")
         return "Supabase not connected. Logged to stdout."
-        
+
     try:
         data = {
-            "agent_name": agent, 
-            "category": category, 
+            "agent_name": agent,
+            "category": category,
             "content": content,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.utcnow().isoformat(),
         }
         supabase.table("journal").insert(data).execute()
         return "Logged successfully."
@@ -32,9 +34,10 @@ def _log_journal(agent: str, category: str, content: str) -> str:
         print(f"[Log Error] {e}")
         return f"Log failed: {e}"
 
+
 def _check_market_status() -> str:
     """Checks if the US stock market is currently open.
-    
+
     Returns:
         A string indicating if the market is OPEN or CLOSED, and the time.
     """
@@ -42,18 +45,18 @@ def _check_market_status() -> str:
     # For a real implementation, use pandas_market_calendars
     from datetime import datetime
     import pytz
-    
-    tz = pytz.timezone('US/Eastern')
+
+    tz = pytz.timezone("US/Eastern")
     now = datetime.now(tz)
-    
+
     is_weekday = now.weekday() < 5
-    is_market_hours = (
-        (now.hour > 9 or (now.hour == 9 and now.minute >= 30)) and
-        (now.hour < 16)
+    is_market_hours = (now.hour > 9 or (now.hour == 9 and now.minute >= 30)) and (
+        now.hour < 16
     )
-    
+
     status = "OPEN" if is_weekday and is_market_hours else "CLOSED"
     return f"Market is {status} (Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')})"
+
 
 def _fetch_market_data(tickers: str) -> str:
     """Fetches real-time price and technical data from Alpaca.
@@ -64,15 +67,16 @@ def _fetch_market_data(tickers: str) -> str:
     Returns:
         JSON string with price data and technical indicators for each ticker
     """
-    api_key = os.getenv('ALPACA_API_KEY')
-    secret_key = os.getenv('ALPACA_SECRET_KEY')
+    settings = get_settings()
+    api_key = settings.alpaca_api_key
+    secret_key = settings.alpaca_secret_key.get_secret_value()
 
     if not api_key or not secret_key:
         return "Error: ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment"
 
     try:
         client = StockHistoricalDataClient(api_key, secret_key)
-        ticker_list = [t.strip().upper() for t in tickers.split(',')]
+        ticker_list = [t.strip().upper() for t in tickers.split(",")]
 
         # Create request for stock snapshots
         request = StockSnapshotRequest(symbol_or_symbols=ticker_list)
@@ -84,7 +88,11 @@ def _fetch_market_data(tickers: str) -> str:
                 snapshot = snapshots.get(ticker)
                 if snapshot and snapshot.latest_trade:
                     # Calculate change percentage
-                    if snapshot.daily_bar and snapshot.daily_bar.close and snapshot.previous_daily_bar:
+                    if (
+                        snapshot.daily_bar
+                        and snapshot.daily_bar.close
+                        and snapshot.previous_daily_bar
+                    ):
                         prev_close = snapshot.previous_daily_bar.close
                         current_close = snapshot.daily_bar.close
                         change_pct = ((current_close - prev_close) / prev_close) * 100
@@ -92,12 +100,20 @@ def _fetch_market_data(tickers: str) -> str:
                         change_pct = 0.0
 
                     data = {
-                        'ticker': ticker,
-                        'price': float(snapshot.latest_trade.price) if snapshot.latest_trade else 0,
-                        'volume': int(snapshot.daily_bar.volume) if snapshot.daily_bar else 0,
-                        'change_pct': round(change_pct, 2),
-                        'high': float(snapshot.daily_bar.high) if snapshot.daily_bar else 0,
-                        'low': float(snapshot.daily_bar.low) if snapshot.daily_bar else 0,
+                        "ticker": ticker,
+                        "price": float(snapshot.latest_trade.price)
+                        if snapshot.latest_trade
+                        else 0,
+                        "volume": int(snapshot.daily_bar.volume)
+                        if snapshot.daily_bar
+                        else 0,
+                        "change_pct": round(change_pct, 2),
+                        "high": float(snapshot.daily_bar.high)
+                        if snapshot.daily_bar
+                        else 0,
+                        "low": float(snapshot.daily_bar.low)
+                        if snapshot.daily_bar
+                        else 0,
                     }
                     results.append(data)
             except Exception as e:
@@ -109,7 +125,10 @@ def _fetch_market_data(tickers: str) -> str:
     except Exception as e:
         return f"Error fetching market data: {str(e)}"
 
-def _write_scan_results(market_regime: str, stocks_json: str, metadata_json: str = "{}") -> str:
+
+def _write_scan_results(
+    market_regime: str, stocks_json: str, metadata_json: str = "{}"
+) -> str:
     """Writes CANSLIM scan results to Supabase.
 
     Args:
@@ -120,6 +139,7 @@ def _write_scan_results(market_regime: str, stocks_json: str, metadata_json: str
     Returns:
         Confirmation message with scan ID
     """
+    supabase = get_supabase()
     if not supabase:
         return "Error: Supabase not connected"
 
@@ -128,28 +148,29 @@ def _write_scan_results(market_regime: str, stocks_json: str, metadata_json: str
         metadata = json.loads(metadata_json)
 
         scan_data = {
-            'scan_time': datetime.now().isoformat(),
-            'market_regime': market_regime,
-            'dist_days': metadata.get('dist_days', ''),
-            'buy_ok': metadata.get('buy_ok', ''),
-            'account_balance': metadata.get('account_balance'),
-            'risk_per_trade': metadata.get('risk_per_trade'),
-            'actionable_count': len(stocks),
-            'metadata': metadata
+            "scan_time": datetime.now().isoformat(),
+            "market_regime": market_regime,
+            "dist_days": metadata.get("dist_days", ""),
+            "buy_ok": metadata.get("buy_ok", ""),
+            "account_balance": metadata.get("account_balance"),
+            "risk_per_trade": metadata.get("risk_per_trade"),
+            "actionable_count": len(stocks),
+            "metadata": metadata,
         }
 
-        scan_result = supabase.table('scans').insert(scan_data).execute()
-        scan_id = scan_result.data[0]['id']
+        scan_result = supabase.table("scans").insert(scan_data).execute()
+        scan_id = scan_result.data[0]["id"]
 
         for stock in stocks:
-            stock['scan_id'] = scan_id
+            stock["scan_id"] = scan_id
 
-        supabase.table('scan_stocks').insert(stocks).execute()
+        supabase.table("scan_stocks").insert(stocks).execute()
 
         return f"✓ Scan saved successfully (ID: {scan_id}, {len(stocks)} stocks)"
 
     except Exception as e:
         return f"Error saving scan: {str(e)}"
+
 
 def _get_current_positions() -> str:
     """Retrieves all open positions from Supabase.
@@ -157,19 +178,18 @@ def _get_current_positions() -> str:
     Returns:
         JSON string with list of open positions
     """
+    supabase = get_supabase()
     if not supabase:
         return "Error: Supabase not connected"
 
     try:
-        result = supabase.table('positions') \
-            .select('*') \
-            .eq('status', 'open') \
-            .execute()
+        result = supabase.table("positions").select("*").eq("status", "open").execute()
 
         return json.dumps(result.data, indent=2)
 
     except Exception as e:
         return f"Error fetching positions: {str(e)}"
+
 
 def _get_watchlist() -> str:
     """Gets stocks currently being monitored.
@@ -177,16 +197,18 @@ def _get_watchlist() -> str:
     Returns:
         JSON string with watchlist stocks
     """
+    supabase = get_supabase()
     if not supabase:
         return "Error: Supabase not connected"
 
     try:
-        result = supabase.table('watchlist').select('*').execute()
+        result = supabase.table("watchlist").select("*").execute()
 
         return json.dumps(result.data, indent=2)
 
     except Exception as e:
         return f"Error fetching watchlist: {str(e)}"
+
 
 def _update_position(position_id: int, updates_json: str) -> str:
     """Updates a position (change stop, close, etc.).
@@ -198,21 +220,22 @@ def _update_position(position_id: int, updates_json: str) -> str:
     Returns:
         Confirmation message
     """
+    supabase = get_supabase()
     if not supabase:
         return "Error: Supabase not connected"
 
     try:
         updates = json.loads(updates_json)
 
-        result = supabase.table('positions') \
-            .update(updates) \
-            .eq('id', position_id) \
-            .execute()
+        result = (
+            supabase.table("positions").update(updates).eq("id", position_id).execute()
+        )
 
         return f"✓ Position {position_id} updated successfully"
 
     except Exception as e:
         return f"Error updating position: {str(e)}"
+
 
 def _check_alerts() -> str:
     """Checks if any price alerts have triggered.
@@ -220,20 +243,19 @@ def _check_alerts() -> str:
     Returns:
         JSON string with triggered alerts
     """
+    supabase = get_supabase()
     if not supabase:
         return "Error: Supabase not connected"
 
     try:
-        result = supabase.table('alerts') \
-            .select('*') \
-            .eq('triggered', False) \
-            .execute()
+        result = supabase.table("alerts").select("*").eq("triggered", False).execute()
 
         alerts = result.data
         return json.dumps(alerts, indent=2)
 
     except Exception as e:
         return f"Error checking alerts: {str(e)}"
+
 
 def _add_to_watchlist(ticker: str, status: str, score: float = 50.0) -> str:
     """Adds or updates a stock in the watchlist.
@@ -246,22 +268,20 @@ def _add_to_watchlist(ticker: str, status: str, score: float = 50.0) -> str:
     Returns:
         Confirmation message
     """
+    supabase = get_supabase()
     if not supabase:
         return "Error: Supabase not connected"
 
     try:
-        data = {
-            'ticker': ticker.upper(),
-            'status': status,
-            'sentiment_score': score
-        }
+        data = {"ticker": ticker.upper(), "status": status, "sentiment_score": score}
 
-        supabase.table('watchlist').upsert(data).execute()
+        supabase.table("watchlist").upsert(data).execute()
 
         return f"✓ Added {ticker} to watchlist (status: {status})"
 
     except Exception as e:
         return f"Error adding to watchlist: {str(e)}"
+
 
 # Wrap all functions with FunctionTool for google-adk compatibility
 log_journal = FunctionTool(_log_journal)

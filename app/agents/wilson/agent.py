@@ -1,6 +1,8 @@
-import os
 from google.adk.agents import Agent
 from google.adk.models import LiteLlm
+
+# Import config first to load environment variables
+from app.config import get_settings
 from app.agents.tools import (
     log_journal,
     check_market_status,
@@ -14,15 +16,13 @@ from app.agents.tools import (
 )
 from app.agents.wilson.prompt import WILSON_SYSTEM_PROMPT
 
-# Configure LiteLlm for OpenRouter
-openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+# Load settings (this sets OPENROUTER_API_KEY in env)
+settings = get_settings()
 
-# Create a LiteLlm instance configured for OpenRouter
-# Use openrouter/ prefix with a valid free model
+# Configure LiteLlm for OpenRouter
+# Model format: openrouter/<provider>/<model-name>
 model = LiteLlm(
-    model="openrouter/minimax/minimax-m2.5",
-    api_key=openrouter_key,
-    api_base="https://openrouter.ai/api/v1",
+    model=settings.openrouter_llm_model,
 )
 
 # Define the Orchestrator

@@ -55,8 +55,19 @@ def task_morning_briefing():
     try:
         response = asyncio.run(run_wilson())
         print(f"✓ Morning scan completed")
-        if response:
-            print(f"Wilson's response: {response[:200]}...")
+
+        # Also fetch and print the summary from journal
+        try:
+            from app.config import get_supabase_client
+            client = get_supabase_client()
+            if client:
+                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
+                if result.data:
+                    print("\n=== Recent Agent Activity ===")
+                    for row in result.data:
+                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+        except Exception as e:
+            print(f"Could not fetch journal: {e}")
     except Exception as e:
         print(f"✗ Morning scan failed: {e}")
         # Log error to journal
