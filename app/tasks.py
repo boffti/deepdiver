@@ -173,8 +173,19 @@ def task_curator_daily_scan():
     try:
         response = asyncio.run(run_curator())
         print(f"✓ Daily scan completed")
-        if response:
-            print(f"Curator's response: {response[:200]}...")
+
+        # Also fetch and print the summary from journal
+        try:
+            from app.config import get_supabase_client
+            client = get_supabase_client()
+            if client:
+                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
+                if result.data:
+                    print("\n=== Recent Curator Activity ===")
+                    for row in result.data:
+                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+        except Exception as e:
+            print(f"Could not fetch journal: {e}")
     except Exception as e:
         print(f"✗ Daily scan failed: {e}")
         try:
@@ -250,8 +261,19 @@ PART 2: Russell 3000 Progressive Scan
     try:
         response = asyncio.run(run_curator())
         print(f"✓ Weekly scan completed - Sector: {focus_sector}, Batch: {batch_number}")
-        if response:
-            print(f"Curator's response: {response[:200]}...")
+
+        # Also fetch and print the summary from journal
+        try:
+            from app.config import get_supabase_client
+            client = get_supabase_client()
+            if client:
+                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
+                if result.data:
+                    print("\n=== Recent Curator Activity ===")
+                    for row in result.data:
+                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+        except Exception as e:
+            print(f"Could not fetch journal: {e}")
     except Exception as e:
         print(f"✗ Weekly scan failed: {e}")
         try:
@@ -317,8 +339,19 @@ def task_curator_monthly_cleanup():
     try:
         response = asyncio.run(run_curator())
         print(f"✓ Monthly cleanup completed")
-        if response:
-            print(f"Curator's response: {response[:200]}...")
+
+        # Also fetch and print the summary from journal
+        try:
+            from app.config import get_supabase_client
+            client = get_supabase_client()
+            if client:
+                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
+                if result.data:
+                    print("\n=== Recent Curator Activity ===")
+                    for row in result.data:
+                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+        except Exception as e:
+            print(f"Could not fetch journal: {e}")
     except Exception as e:
         print(f"✗ Monthly cleanup failed: {e}")
         try:
