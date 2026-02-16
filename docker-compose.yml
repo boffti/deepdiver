@@ -1,9 +1,31 @@
 version: '3.8'
 
 services:
-  deepdiver:
-    build: .
-    container_name: deepdiver
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: deepdiver-db
+    environment:
+      POSTGRES_USER: deepdiver
+      POSTGRES_PASSWORD: deepdiver
+      POSTGRES_DB: deepdiver
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docs/postgres-schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepdiver"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Flask Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deepdiver-api
     ports:
       - "8080:8080"
     env_file:
@@ -11,8 +33,11 @@ services:
     environment:
       - FLASK_ENV=development
       - PORT=8080
+      - DATABASE_URL=postgresql://deepdiver:deepdiver@postgres:5432/deepdiver
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      # Mount code for hot reload during development
       - ./app:/app/app
       - ./run.py:/app/run.py
     restart: unless-stopped
@@ -22,3 +47,22 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./client
+      dockerfile: ../Dockerfile.client
+    container_name: deepdiver-web
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    depends_on:
+      - backend
+    volumes:
+      - ./client/src:/app/src
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
