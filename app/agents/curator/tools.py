@@ -6,7 +6,7 @@ from the Russell 3000 index.
 """
 
 from google.adk.tools import FunctionTool
-from app.extensions import get_supabase
+from app.db import execute_query, execute_insert, execute_update
 from app.config import get_settings
 import requests
 import json
@@ -464,16 +464,15 @@ def _update_trading_universe(ticker: str, data_json: str) -> str:
     Returns:
         Confirmation message
     """
-    supabase = get_supabase()
-    if not supabase:
-        return "Error: Supabase not connected"
-
     try:
         data = json.loads(data_json)
         ticker = ticker.upper().strip()
 
         # Prepare upsert data
-        upsert_data = {"ticker": ticker, "last_scanned": datetime.utcnow().isoformat()}
+        upsert_data = {
+            "last_scanned": datetime.utcnow().isoformat(),
+            "ticker": ticker
+        }
 
         # Add optional fields
         if "company_name" in data:
@@ -500,8 +499,22 @@ def _update_trading_universe(ticker: str, data_json: str) -> str:
         if data.get("score", 0) > 0:
             upsert_data["last_mention"] = datetime.utcnow().isoformat()
 
-        # Upsert to Supabase
-        result = supabase.table("trading_universe").upsert(upsert_data).execute()
+        # Try update first
+        columns = list(upsert_data.keys())
+        set_clause = ", ".join([f"{col} = %s" for col in columns])
+        values = list(upsert_data.values())
+
+        updated = execute_update(
+            f"UPDATE trading_universe SET {set_clause} WHERE ticker = %s",
+            tuple(values) + (ticker,)
+        )
+
+        if updated == 0:
+            # Insert if not exists
+            execute_insert(
+                f"INSERT INTO trading_universe ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})",
+                tuple(values)
+            )
 
         return f"✓ Updated {ticker} in trading_universe (score: {data.get('score', 'N/A')}, category: {data.get('category', 'N/A')})"
 
@@ -525,40 +538,40 @@ def _get_trading_universe(filters_json: str = "{}") -> str:
     Returns:
         JSON string with list of matching stocks
     """
-    supabase = get_supabase()
-    if not supabase:
-        return json.dumps({"error": "Supabase not connected"})
-
     try:
         filters = json.loads(filters_json)
 
         # Build query
-        query = supabase.table("trading_universe").select("*")
+        query = "SELECT * FROM trading_universe WHERE 1=1"
+        params = []
 
         # Apply filters
         if "is_active" in filters:
-            query = query.eq("is_active", filters["is_active"])
+            query += " AND is_active = %s"
+            params.append(filters["is_active"])
 
         if "min_score" in filters:
-            query = query.gte("score", filters["min_score"])
+            query += " AND score >= %s"
+            params.append(filters["min_score"])
 
         if "max_score" in filters:
-            query = query.lte("score", filters["max_score"])
+            query += " AND score <= %s"
+            params.append(filters["max_score"])
 
         if "category" in filters:
-            query = query.eq("category", filters["category"])
+            query += " AND category = %s"
+            params.append(filters["category"])
 
         # Order by score descending
-        query = query.order("score", desc=True)
+        query += " ORDER BY score DESC"
 
         # Limit results
         limit = filters.get("limit", 100)
-        query = query.limit(limit)
+        query += f" LIMIT {limit}"
 
-        # Execute query
-        result = query.execute()
+        result = execute_query(query, tuple(params) if params else None)
 
-        return json.dumps({"count": len(result.data), "stocks": result.data}, indent=2)
+        return json.dumps({"count": len(result), "stocks": [dict(r) for r in result]}, indent=2, default=str)
 
     except Exception as e:
         return json.dumps({"error": str(e)})

@@ -585,7 +585,6 @@
     </style>
 
     <!-- Supabase JS Client -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
     <div class="container">
@@ -1443,91 +1442,42 @@
         loadData();
     </script>
 
-    <!-- Supabase Real-time Subscriptions -->
+    <!-- Data Polling (replaces Supabase Real-time) -->
     <script>
-    // Initialize Supabase client
-    const SUPABASE_CONFIG = {
-        url: '{{ supabase_config.url }}',
-        anonKey: '{{ supabase_config.anon_key }}'
-    };
+    // Polling interval in milliseconds (30 seconds)
+    const POLL_INTERVAL = 30000;
 
-    let supabaseClient = null;
+    let pollTimer = null;
 
-    if (SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey) {
-        supabaseClient = window.supabase.createClient(
-            SUPABASE_CONFIG.url,
-            SUPABASE_CONFIG.anonKey
-        );
+    function startPolling() {
+        // Poll immediately on load
+        loadData();
 
-        setupRealtimeSubscriptions();
+        // Then poll periodically
+        pollTimer = setInterval(() => {
+            console.log('Polling for updates...');
+            loadData();
+        }, POLL_INTERVAL);
+
+        console.log('Polling started (interval: ' + (POLL_INTERVAL/1000) + 's)');
+        updateConnectionStatus(true);
     }
 
-    function setupRealtimeSubscriptions() {
-        if (!supabaseClient) return;
-
-        // 1. Listen for new scans
-        supabaseClient
-            .channel('scans-channel')
-            .on('postgres_changes',
-                { event: 'INSERT', schema: 'public', table: 'scans' },
-                (payload) => {
-                    console.log('🔍 New scan detected:', payload.new);
-                    showNotification('New CANSLIM scan available');
-                    loadData();
-                })
-            .subscribe();
-
-        // 2. Listen for position changes
-        supabaseClient
-            .channel('positions-channel')
-            .on('postgres_changes',
-                { event: '*', schema: 'public', table: 'positions' },
-                (payload) => {
-                    console.log('📊 Position updated:', payload);
-                    loadData();
-                })
-            .subscribe();
-
-        // 3. Listen for triggered alerts
-        supabaseClient
-            .channel('alerts-channel')
-            .on('postgres_changes',
-                { event: 'UPDATE', schema: 'public', table: 'alerts' },
-                (payload) => {
-                    if (payload.new.triggered && !payload.old.triggered) {
-                        const msg = `🚨 Alert: ${payload.new.ticker} ${payload.new.condition} $${payload.new.price}`;
-                        showNotification(msg);
-                        playAlertSound();
-                    }
-                })
-            .subscribe();
-
-        // 4. Listen for Wilson's journal entries
-        supabaseClient
-            .channel('journal-channel')
-            .on('postgres_changes',
-                { event: 'INSERT', schema: 'public', table: 'journal' },
-                (payload) => {
-                    console.log('📝 Wilson logged:', payload.new);
-                    if (payload.new.category === 'Trade') {
-                        showNotification(`Wilson: ${payload.new.content}`);
-                    }
-                })
-            .subscribe();
-
-        // Connection status monitoring
-        supabaseClient
-            .channel('system')
-            .on('system', { event: 'connected' }, () => {
-                console.log('✓ Real-time connected');
-                updateConnectionStatus(true);
-            })
-            .on('system', { event: 'disconnected' }, () => {
-                console.warn('✗ Real-time disconnected');
-                updateConnectionStatus(false);
-            })
-            .subscribe();
+    function stopPolling() {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+        }
+        updateConnectionStatus(false);
     }
+
+    // Start polling when page loads
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startPolling);
+    } else {
+        startPolling();
+    }
+    </script>
 
     function showNotification(message) {
         // Browser notification

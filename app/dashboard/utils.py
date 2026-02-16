@@ -1,3 +1,4 @@
+import json
 import os
 
 # Configuration
@@ -12,61 +13,102 @@ DEFAULT_SETTINGS = {
     'max_positions': 6
 }
 
-def _get_supabase():
-    """Get Supabase client (lazy import to avoid circular dependency)"""
-    from app.extensions import supabase
-    return supabase
+# Database helpers
+def _get_db():
+    """Get database module (lazy import to avoid circular dependency)"""
+    from app import db
+    return db
+
+
+def _json_serialize(obj):
+    """Serialize objects for JSON storage."""
+    if obj is None:
+        return None
+    if hasattr(obj, '__dict__'):
+        return json.dumps(obj.__dict__)
+    return json.dumps(obj) if not isinstance(obj, (str, int, float, bool, list, dict)) else obj
+
 
 # Scan helpers
 def get_latest_scan():
     """Get most recent CANSLIM scan with stocks."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('scans') \
-            .select('*, scan_stocks(*)') \
-            .order('created_at', desc=True) \
-            .limit(1) \
-            .execute()
-        return result.data[0] if result.data else None
+        # Get the latest scan
+        scans = execute_query(
+            "SELECT * FROM scans ORDER BY created_at DESC LIMIT 1"
+        )
+
+        if not scans:
+            return None
+
+        scan = dict(scans[0])
+
+        # Get stocks for this scan
+        stocks = execute_query(
+            "SELECT * FROM scan_stocks WHERE scan_id = %s ORDER BY created_at",
+            (scan['id'],)
+        )
+
+        scan['scan_stocks'] = [dict(s) for s in stocks]
+        return scan
     except Exception as e:
         print(f"Error fetching latest scan: {e}")
         return None
 
+
 def get_scan_by_id(scan_id):
     """Get specific scan with stocks."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('scans') \
-            .select('*, scan_stocks(*)') \
-            .eq('id', scan_id) \
-            .single() \
-            .execute()
-        return result.data
+        scans = execute_query(
+            "SELECT * FROM scans WHERE id = %s",
+            (scan_id,)
+        )
+
+        if not scans:
+            return None
+
+        scan = dict(scans[0])
+
+        # Get stocks for this scan
+        stocks = execute_query(
+            "SELECT * FROM scan_stocks WHERE scan_id = %s ORDER BY created_at",
+            (scan_id,)
+        )
+
+        scan['scan_stocks'] = [dict(s) for s in stocks]
+        return scan
     except Exception as e:
         print(f"Error fetching scan {scan_id}: {e}")
         return None
 
+
 def get_all_scans(limit=50):
     """Get historical scans."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('scans') \
-            .select('id, created_at, scan_time, market_regime, actionable_count') \
-            .order('created_at', desc=True) \
-            .limit(limit) \
-            .execute()
-        return result.data
+        result = execute_query(
+            "SELECT id, created_at, scan_time, market_regime, actionable_count FROM scans ORDER BY created_at DESC LIMIT %s",
+            (limit,)
+        )
+        return [dict(r) for r in result]
     except Exception as e:
         print(f"Error fetching scans: {e}")
         return []
 
+
 # Settings helpers
 def get_settings():
     """Get all settings as dict."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('settings').select('*').execute()
-        settings = {row['key']: row['value'] for row in result.data}
+        result = execute_query("SELECT * FROM settings")
+        settings = {row['key']: row['value'] for row in result}
         # Merge with defaults for missing keys
         for k, v in DEFAULT_SETTINGS.items():
             if k not in settings:
@@ -76,126 +118,196 @@ def get_settings():
         print(f"Error fetching settings: {e}")
         return DEFAULT_SETTINGS.copy()
 
+
 def update_setting(key, value):
     """Update a single setting."""
-    supabase = _get_supabase()
+    from app.db import execute_update
+
     try:
-        supabase.table('settings') \
-            .upsert({'key': key, 'value': value}) \
-            .execute()
+        value_json = json.dumps(value) if not isinstance(value, str) else value
+        # Try update first
+        updated = execute_update(
+            "UPDATE settings SET value = %s, updated_at = NOW() WHERE key = %s",
+            (value_json, key)
+        )
+        if updated == 0:
+            # Insert if not exists
+            from app.db import execute_insert
+            execute_insert(
+                "INSERT INTO settings (key, value) VALUES (%s, %s)",
+                (key, value_json)
+            )
         return True
     except Exception as e:
         print(f"Error updating setting {key}: {e}")
         return False
 
+
 # Alert helpers
 def get_all_alerts():
     """Get all alerts."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('alerts') \
-            .select('*') \
-            .order('created_at', desc=True) \
-            .execute()
-        return result.data
+        result = execute_query(
+            "SELECT * FROM alerts ORDER BY created_at DESC"
+        )
+        return [dict(r) for r in result]
     except Exception as e:
         print(f"Error fetching alerts: {e}")
         return []
 
+
 def add_alert(ticker, condition, price):
     """Add new alert."""
-    supabase = _get_supabase()
+    from app.db import execute_insert
+
     try:
-        result = supabase.table('alerts').insert({
-            'ticker': ticker.upper(),
-            'condition': condition,
-            'price': float(price),
-            'triggered': False
-        }).execute()
-        return result.data[0] if result.data else None
+        result = execute_insert(
+            "INSERT INTO alerts (ticker, condition, price, triggered) VALUES (%s, %s, %s, %s) RETURNING *",
+            (ticker.upper(), condition, float(price), False)
+        )
+        return dict(result) if result else None
     except Exception as e:
         print(f"Error adding alert: {e}")
         return None
 
+
 def delete_alert(alert_id):
     """Delete alert by ID."""
-    supabase = _get_supabase()
+    from app.db import execute_update
+
     try:
-        supabase.table('alerts').delete().eq('id', alert_id).execute()
+        execute_update(
+            "DELETE FROM alerts WHERE id = %s",
+            (alert_id,)
+        )
         return True
     except Exception as e:
         print(f"Error deleting alert: {e}")
         return False
 
+
 # Earnings helpers
 def get_all_earnings():
     """Get earnings calendar."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('earnings').select('*').execute()
-        return {row['ticker']: row['earnings_date'] for row in result.data}
+        result = execute_query("SELECT * FROM earnings")
+        return {row['ticker']: row['earnings_date'] for row in result}
     except Exception as e:
         print(f"Error fetching earnings: {e}")
         return {}
 
+
 def set_earnings_date(ticker, date):
     """Set earnings date for ticker."""
-    supabase = _get_supabase()
+    from app.db import execute_update, execute_insert
+
     try:
-        supabase.table('earnings') \
-            .upsert({'ticker': ticker.upper(), 'earnings_date': date}) \
-            .execute()
+        # Try update first
+        updated = execute_update(
+            "UPDATE earnings SET earnings_date = %s, updated_at = NOW() WHERE ticker = %s",
+            (date, ticker.upper())
+        )
+        if updated == 0:
+            # Insert if not exists
+            execute_insert(
+                "INSERT INTO earnings (ticker, earnings_date) VALUES (%s, %s)",
+                (ticker.upper(), date)
+            )
         return True
     except Exception as e:
         print(f"Error setting earnings for {ticker}: {e}")
         return False
 
+
 # Position helpers
 def get_all_positions(status=None):
     """Get positions filtered by status."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        query = supabase.table('positions').select('*')
         if status:
-            query = query.eq('status', status)
-        result = query.order('entry_date', desc=True).execute()
-        return result.data
+            result = execute_query(
+                "SELECT * FROM positions WHERE status = %s ORDER BY entry_date DESC",
+                (status,)
+            )
+        else:
+            result = execute_query(
+                "SELECT * FROM positions ORDER BY entry_date DESC"
+            )
+        return [dict(r) for r in result]
     except Exception as e:
         print(f"Error fetching positions: {e}")
         return []
 
+
 def add_position(position_data):
     """Add new position."""
-    supabase = _get_supabase()
+    from app.db import execute_insert
+
     try:
-        result = supabase.table('positions').insert(position_data).execute()
-        return result.data[0] if result.data else None
+        # Map field names to DB columns
+        columns = ['ticker', 'account', 'trade_type', 'entry_date', 'entry_price',
+                   'shares', 'cost_basis', 'stop_price', 'target_price', 'setup_type',
+                   'status']
+        values = []
+        for col in columns:
+            values.append(position_data.get(col))
+
+        result = execute_insert(
+            f"INSERT INTO positions ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))}) RETURNING *",
+            tuple(values)
+        )
+        return dict(result) if result else None
     except Exception as e:
         print(f"Error adding position: {e}")
         return None
 
+
 def update_position(position_id, updates):
     """Update position."""
-    supabase = _get_supabase()
+    from app.db import execute_update, execute_query
+
     try:
-        result = supabase.table('positions') \
-            .update(updates) \
-            .eq('id', position_id) \
-            .execute()
-        return result.data[0] if result.data else None
+        if not updates:
+            return None
+
+        set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+        values = list(updates.values()) + [position_id]
+
+        execute_update(
+            f"UPDATE positions SET {set_clause} WHERE id = %s",
+            tuple(values)
+        )
+
+        # Return updated position
+        result = execute_query(
+            "SELECT * FROM positions WHERE id = %s",
+            (position_id,)
+        )
+        return dict(result[0]) if result else None
     except Exception as e:
         print(f"Error updating position: {e}")
         return None
 
+
 def delete_position(position_id):
     """Delete position."""
-    supabase = _get_supabase()
+    from app.db import execute_update
+
     try:
-        supabase.table('positions').delete().eq('id', position_id).execute()
+        execute_update(
+            "DELETE FROM positions WHERE id = %s",
+            (position_id,)
+        )
         return True
     except Exception as e:
         print(f"Error deleting position: {e}")
         return False
+
 
 def _positions_summary(positions):
     """Calculate positions summary."""
@@ -209,52 +321,85 @@ def _positions_summary(positions):
         'total_pnl': total_pnl
     }
 
+
 # Covered calls helpers
 def get_all_calls():
     """Get all covered calls."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('covered_calls') \
-            .select('*') \
-            .order('sell_date', desc=True) \
-            .execute()
-        return result.data
+        result = execute_query(
+            "SELECT * FROM covered_calls ORDER BY sell_date DESC"
+        )
+        return [dict(r) for r in result]
     except Exception as e:
         print(f"Error fetching calls: {e}")
         return []
 
+
 def add_call(call_data):
     """Add new covered call."""
-    supabase = _get_supabase()
+    from app.db import execute_insert
+
     try:
-        result = supabase.table('covered_calls').insert(call_data).execute()
-        return result.data[0] if result.data else None
+        columns = ['ticker', 'sell_date', 'expiry', 'strike', 'contracts',
+                   'premium_per_contract', 'premium_total', 'delta', 'stock_price_at_sell',
+                   'status']
+        values = []
+        for col in columns:
+            values.append(call_data.get(col))
+
+        result = execute_insert(
+            f"INSERT INTO covered_calls ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))}) RETURNING *",
+            tuple(values)
+        )
+        return dict(result) if result else None
     except Exception as e:
         print(f"Error adding call: {e}")
         return None
 
+
 def update_call(call_id, updates):
     """Update covered call."""
-    supabase = _get_supabase()
+    from app.db import execute_update, execute_query
+
     try:
-        result = supabase.table('covered_calls') \
-            .update(updates) \
-            .eq('id', call_id) \
-            .execute()
-        return result.data[0] if result.data else None
+        if not updates:
+            return None
+
+        set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+        values = list(updates.values()) + [call_id]
+
+        execute_update(
+            f"UPDATE covered_calls SET {set_clause} WHERE id = %s",
+            tuple(values)
+        )
+
+        # Return updated call
+        result = execute_query(
+            "SELECT * FROM covered_calls WHERE id = %s",
+            (call_id,)
+        )
+        return dict(result[0]) if result else None
     except Exception as e:
         print(f"Error updating call: {e}")
         return None
 
+
 def delete_call(call_id):
     """Delete covered call."""
-    supabase = _get_supabase()
+    from app.db import execute_update
+
     try:
-        supabase.table('covered_calls').delete().eq('id', call_id).execute()
+        execute_update(
+            "DELETE FROM covered_calls WHERE id = %s",
+            (call_id,)
+        )
         return True
     except Exception as e:
         print(f"Error deleting call: {e}")
         return False
+
 
 def _calls_summary(trades):
     """Calculate calls summary."""
@@ -297,50 +442,63 @@ def _calls_summary(trades):
     overall['by_ticker'] = by_ticker
     return overall
 
+
 # Routine helpers
 def get_routine(date_str):
     """Get routine for specific date."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('routines') \
-            .select('*') \
-            .eq('date', date_str) \
-            .execute()
+        result = execute_query(
+            "SELECT * FROM routines WHERE date = %s",
+            (date_str,)
+        )
 
         routines = {'date': date_str}
-        for row in result.data:
+        for row in result:
             routines[row['routine_type']] = row['data']
         return routines
     except Exception as e:
         print(f"Error fetching routine for {date_str}: {e}")
         return {'date': date_str}
 
+
 def save_routine(date_str, routine_type, data):
     """Save routine data."""
-    supabase = _get_supabase()
+    from app.db import execute_update, execute_insert
+    import json
+
     try:
-        supabase.table('routines') \
-            .upsert({
-                'date': date_str,
-                'routine_type': routine_type,
-                'data': data
-            }) \
-            .execute()
+        data_json = json.dumps(data) if not isinstance(data, str) else data
+
+        # Try update first
+        updated = execute_update(
+            "UPDATE routines SET data = %s, updated_at = NOW() WHERE date = %s AND routine_type = %s",
+            (data_json, date_str, routine_type)
+        )
+        if updated == 0:
+            # Insert if not exists
+            execute_insert(
+                "INSERT INTO routines (date, routine_type, data) VALUES (%s, %s, %s)",
+                (date_str, routine_type, data_json)
+            )
         return True
     except Exception as e:
         print(f"Error saving routine: {e}")
         return False
 
+
 def get_all_routine_dates():
     """Get set of dates that have routine records."""
-    supabase = _get_supabase()
+    from app.db import execute_query
+
     try:
-        result = supabase.table('routines') \
-            .select('date, routine_type') \
-            .execute()
+        result = execute_query(
+            "SELECT date, routine_type FROM routines"
+        )
 
         dates = {}
-        for row in result.data:
+        for row in result:
             ds = row['date']
             if ds not in dates:
                 dates[ds] = {'has_premarket': False, 'has_postclose': False}
@@ -352,6 +510,7 @@ def get_all_routine_dates():
     except Exception as e:
         print(f"Error fetching routine dates: {e}")
         return {}
+
 
 # Backwards compatibility - legacy function names
 load_calls = get_all_calls

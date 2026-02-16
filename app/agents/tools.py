@@ -1,26 +1,19 @@
 from google.adk.tools import FunctionTool
-from app.extensions import get_supabase
+from app.db import execute_query, execute_insert, execute_update
 from app.config import get_settings
 import requests
 import json
 from datetime import datetime
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockSnapshotRequest
 
 
 def _log_journal(agent: str, category: str, content: str) -> str:
-    """Logs an event to the cloud database (Supabase).
+    """Logs an event to the local PostgreSQL database.
 
     Args:
         agent: Name of the agent (e.g., 'Wilson', 'Scanner').
         category: Type of log (Trade, Error, Summary, Signal, Thinking).
         content: The message to log.
     """
-    supabase = get_supabase()
-    if not supabase:
-        print(f"[Fallback Log] {agent} | {category}: {content}")
-        return "Supabase not connected. Logged to stdout."
-
     try:
         data = {
             "agent_name": agent,
@@ -28,7 +21,10 @@ def _log_journal(agent: str, category: str, content: str) -> str:
             "content": content,
             "created_at": datetime.utcnow().isoformat(),
         }
-        supabase.table("journal").insert(data).execute()
+        execute_insert(
+            "INSERT INTO journal (agent_name, category, content, created_at) VALUES (%s, %s, %s, %s)",
+            (data["agent_name"], data["category"], data["content"], data["created_at"])
+        )
         return "Logged successfully."
     except Exception as e:
         print(f"[Log Error] {e}")
@@ -42,7 +38,6 @@ def _check_market_status() -> str:
         A string indicating if the market is OPEN or CLOSED, and the time.
     """
     # Simple check based on time (9:30 AM - 4:00 PM ET)
-    # For a real implementation, use pandas_market_calendars
     from datetime import datetime
     import pytz
 
@@ -75,6 +70,9 @@ def _fetch_market_data(tickers: str) -> str:
         return "Error: ALPACA_API_KEY and ALPACA_SECRET_KEY must be set in environment"
 
     try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockSnapshotRequest
+
         client = StockHistoricalDataClient(api_key, secret_key)
         ticker_list = [t.strip().upper() for t in tickers.split(",")]
 
@@ -129,7 +127,7 @@ def _fetch_market_data(tickers: str) -> str:
 def _write_scan_results(
     market_regime: str, stocks_json: str, metadata_json: str = "{}"
 ) -> str:
-    """Writes CANSLIM scan results to Supabase.
+    """Writes CANSLIM scan results to local PostgreSQL.
 
     Args:
         market_regime: Current market condition (e.g., "Confirmed", "Rally Attempt")
@@ -139,10 +137,6 @@ def _write_scan_results(
     Returns:
         Confirmation message with scan ID
     """
-    supabase = get_supabase()
-    if not supabase:
-        return "Error: Supabase not connected"
-
     try:
         stocks = json.loads(stocks_json)
         metadata = json.loads(metadata_json)
@@ -155,16 +149,28 @@ def _write_scan_results(
             "account_balance": metadata.get("account_balance"),
             "risk_per_trade": metadata.get("risk_per_trade"),
             "actionable_count": len(stocks),
-            "metadata": metadata,
+            "metadata": json.dumps(metadata),
         }
 
-        scan_result = supabase.table("scans").insert(scan_data).execute()
-        scan_id = scan_result.data[0]["id"]
+        # Insert scan
+        scan_id = execute_insert(
+            """INSERT INTO scans (scan_time, market_regime, dist_days, buy_ok, account_balance, risk_per_trade, actionable_count, metadata)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (scan_data["scan_time"], scan_data["market_regime"], scan_data["dist_days"],
+             scan_data["buy_ok"], scan_data["account_balance"], scan_data["risk_per_trade"],
+             scan_data["actionable_count"], scan_data["metadata"])
+        )
 
+        # Insert stocks
         for stock in stocks:
-            stock["scan_id"] = scan_id
-
-        supabase.table("scan_stocks").insert(stocks).execute()
+            execute_insert(
+                """INSERT INTO scan_stocks (scan_id, ticker, pivot, stop, rs_rating, comp_rating, eps_rating, setup_type, notes, metadata)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (scan_id, stock.get("ticker"), stock.get("pivot"), stock.get("stop"),
+                 stock.get("rs_rating"), stock.get("comp_rating"), stock.get("eps_rating"),
+                 stock.get("setup_type"), stock.get("notes"),
+                 json.dumps(stock.get("metadata", {})))
+            )
 
         return f"✓ Scan saved successfully (ID: {scan_id}, {len(stocks)} stocks)"
 
@@ -173,19 +179,17 @@ def _write_scan_results(
 
 
 def _get_current_positions() -> str:
-    """Retrieves all open positions from Supabase.
+    """Retrieves all open positions from local PostgreSQL.
 
     Returns:
         JSON string with list of open positions
     """
-    supabase = get_supabase()
-    if not supabase:
-        return "Error: Supabase not connected"
-
     try:
-        result = supabase.table("positions").select("*").eq("status", "open").execute()
-
-        return json.dumps(result.data, indent=2)
+        result = execute_query(
+            "SELECT * FROM positions WHERE status = %s",
+            ("open",)
+        )
+        return json.dumps([dict(r) for r in result], indent=2, default=str)
 
     except Exception as e:
         return f"Error fetching positions: {str(e)}"
@@ -197,14 +201,9 @@ def _get_watchlist() -> str:
     Returns:
         JSON string with watchlist stocks
     """
-    supabase = get_supabase()
-    if not supabase:
-        return "Error: Supabase not connected"
-
     try:
-        result = supabase.table("watchlist").select("*").execute()
-
-        return json.dumps(result.data, indent=2)
+        result = execute_query("SELECT * FROM watchlist")
+        return json.dumps([dict(r) for r in result], indent=2, default=str)
 
     except Exception as e:
         return f"Error fetching watchlist: {str(e)}"
@@ -220,15 +219,15 @@ def _update_position(position_id: int, updates_json: str) -> str:
     Returns:
         Confirmation message
     """
-    supabase = get_supabase()
-    if not supabase:
-        return "Error: Supabase not connected"
-
     try:
         updates = json.loads(updates_json)
 
-        result = (
-            supabase.table("positions").update(updates).eq("id", position_id).execute()
+        set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+        values = list(updates.values()) + [position_id]
+
+        execute_update(
+            f"UPDATE positions SET {set_clause} WHERE id = %s",
+            tuple(values)
         )
 
         return f"✓ Position {position_id} updated successfully"
@@ -243,15 +242,12 @@ def _check_alerts() -> str:
     Returns:
         JSON string with triggered alerts
     """
-    supabase = get_supabase()
-    if not supabase:
-        return "Error: Supabase not connected"
-
     try:
-        result = supabase.table("alerts").select("*").eq("triggered", False).execute()
-
-        alerts = result.data
-        return json.dumps(alerts, indent=2)
+        result = execute_query(
+            "SELECT * FROM alerts WHERE triggered = %s",
+            (False,)
+        )
+        return json.dumps([dict(r) for r in result], indent=2, default=str)
 
     except Exception as e:
         return f"Error checking alerts: {str(e)}"
@@ -268,14 +264,18 @@ def _add_to_watchlist(ticker: str, status: str, score: float = 50.0) -> str:
     Returns:
         Confirmation message
     """
-    supabase = get_supabase()
-    if not supabase:
-        return "Error: Supabase not connected"
-
     try:
-        data = {"ticker": ticker.upper(), "status": status, "sentiment_score": score}
-
-        supabase.table("watchlist").upsert(data).execute()
+        # Try update first
+        updated = execute_update(
+            "UPDATE watchlist SET status = %s, sentiment_score = %s, last_updated = NOW() WHERE ticker = %s",
+            (status, score, ticker.upper())
+        )
+        if updated == 0:
+            # Insert if not exists
+            execute_insert(
+                "INSERT INTO watchlist (ticker, status, sentiment_score) VALUES (%s, %s, %s)",
+                (ticker.upper(), status, score)
+            )
 
         return f"✓ Added {ticker} to watchlist (status: {status})"
 

@@ -58,14 +58,12 @@ def task_morning_briefing():
 
         # Also fetch and print the summary from journal
         try:
-            from app.config import get_supabase_client
-            client = get_supabase_client()
-            if client:
-                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
-                if result.data:
-                    print("\n=== Recent Agent Activity ===")
-                    for row in result.data:
-                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+            from app.db import execute_query
+            result = execute_query("SELECT * FROM journal ORDER BY created_at DESC LIMIT 3")
+            if result:
+                print("\n=== Recent Agent Activity ===")
+                for row in result:
+                    print(f"\n[{row['category']}] {row['content'][:500]}...")
         except Exception as e:
             print(f"Could not fetch journal: {e}")
     except Exception as e:
@@ -176,14 +174,12 @@ def task_curator_daily_scan():
 
         # Also fetch and print the summary from journal
         try:
-            from app.config import get_supabase_client
-            client = get_supabase_client()
-            if client:
-                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
-                if result.data:
-                    print("\n=== Recent Curator Activity ===")
-                    for row in result.data:
-                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+            from app.db import execute_query
+            result = execute_query("SELECT * FROM journal ORDER BY created_at DESC LIMIT 3")
+            if result:
+                print("\n=== Recent Curator Activity ===")
+                for row in result:
+                    print(f"\n[{row['category']}] {row['content'][:500]}...")
         except Exception as e:
             print(f"Could not fetch journal: {e}")
     except Exception as e:
@@ -264,14 +260,12 @@ PART 2: Russell 3000 Progressive Scan
 
         # Also fetch and print the summary from journal
         try:
-            from app.config import get_supabase_client
-            client = get_supabase_client()
-            if client:
-                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
-                if result.data:
-                    print("\n=== Recent Curator Activity ===")
-                    for row in result.data:
-                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+            from app.db import execute_query
+            result = execute_query("SELECT * FROM journal ORDER BY created_at DESC LIMIT 3")
+            if result:
+                print("\n=== Recent Curator Activity ===")
+                for row in result:
+                    print(f"\n[{row['category']}] {row['content'][:500]}...")
         except Exception as e:
             print(f"Could not fetch journal: {e}")
     except Exception as e:
@@ -342,14 +336,12 @@ def task_curator_monthly_cleanup():
 
         # Also fetch and print the summary from journal
         try:
-            from app.config import get_supabase_client
-            client = get_supabase_client()
-            if client:
-                result = client.table('journal').select('*').order('created_at', desc=True).limit(3).execute()
-                if result.data:
-                    print("\n=== Recent Curator Activity ===")
-                    for row in result.data:
-                        print(f"\n[{row['category']}] {row['content'][:500]}...")
+            from app.db import execute_query
+            result = execute_query("SELECT * FROM journal ORDER BY created_at DESC LIMIT 3")
+            if result:
+                print("\n=== Recent Curator Activity ===")
+                for row in result:
+                    print(f"\n[{row['category']}] {row['content'][:500]}...")
         except Exception as e:
             print(f"Could not fetch journal: {e}")
     except Exception as e:

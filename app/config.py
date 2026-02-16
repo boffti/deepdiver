@@ -5,11 +5,9 @@ Loads environment variables and validates configuration for DeepDiver.
 
 import os
 from functools import lru_cache
-from typing import Optional
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 from pydantic import SecretStr
-from supabase import Client, create_client
 
 # Load .env file early to ensure environment variables are available
 from dotenv import load_dotenv
@@ -17,45 +15,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-# Global Supabase client instance
-_supabase_client: Optional[Client] = None
-
-
-def get_supabase_client() -> Optional[Client]:
-    """Get or create Supabase client.
-
-    Returns:
-        Supabase client instance, or None if not configured
-    """
-    global _supabase_client
-
-    if _supabase_client is not None:
-        return _supabase_client
-
-    # Try to get from settings
-    try:
-        settings = get_settings()
-        url = settings.supabase_url
-        key = settings.supabase_key.get_secret_value()
-
-        if url and key:
-            _supabase_client = create_client(url, key)
-            return _supabase_client
-    except Exception:
-        pass
-
-    return None
-
-
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Supabase
-    supabase_url: str = Field(description="Supabase project URL")
-    supabase_key: SecretStr = Field(description="Supabase service role key")
-    supabase_anon_key: SecretStr = Field(
-        description="Supabase anonymous key for frontend"
+    # Database (local PostgreSQL)
+    database_url: str = Field(
+        default="postgresql://deepdiver:deepdiver@localhost:5432/deepdiver",
+        description="PostgreSQL connection URL"
     )
+    db_host: str = Field(default="localhost", description="Database host")
+    db_port: int = Field(default=5432, description="Database port")
+    db_name: str = Field(default="deepdiver", description="Database name")
+    db_user: str = Field(default="deepdiver", description="Database user")
+    db_password: SecretStr = Field(default="deepdiver", description="Database password")
 
     # Market Data APIs
     alpaca_api_key: str = Field(description="Alpaca API key")
@@ -89,6 +61,9 @@ class Settings(BaseSettings):
         # Set OpenRouter configuration
         os.environ["OPENROUTER_API_KEY"] = self.openrouter_api_key.get_secret_value()
         os.environ["OPENROUTER_API_BASE"] = self.openrouter_api_base
+
+        # Set database URL
+        os.environ["DATABASE_URL"] = f"postgresql://{self.db_user}:{self.db_password.get_secret_value()}@{self.db_host}:{self.db_port}/{self.db_name}"
 
         return self
 
