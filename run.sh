@@ -40,7 +40,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # Start Flask backend
-PORT=${PORT:-8080}
+export PORT=${PORT:-8080}
 echo "🚀 Starting Flask API on http://localhost:$PORT"
 uv run run.py &
 FLASK_PID=$!
@@ -50,7 +50,7 @@ sleep 2
 
 # Start React dev server
 echo "🚀 Starting React Dev Server on http://localhost:5173"
-cd client && npm run dev &
+cd client && PORT=$PORT npm run dev &
 REACT_PID=$!
 
 echo ""
