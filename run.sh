@@ -29,8 +29,38 @@ fi
 # Create data directory if it doesn't exist (for backwards compatibility)
 mkdir -p app/data/history app/data/routines
 
-# Run the app using uv
-PORT=${PORT:-8080}
-echo "🚀 Starting DeepDiver Trading System on http://localhost:$PORT"
-uv run run.py
+# Function to handle cleanup
+cleanup() {
+    echo ""
+    echo "Shutting down servers..."
+    kill $FLASK_PID $REACT_PID 2>/dev/null
+    exit 0
+}
 
+trap cleanup SIGINT SIGTERM
+
+# Start Flask backend
+PORT=${PORT:-8080}
+echo "🚀 Starting Flask API on http://localhost:$PORT"
+uv run run.py &
+FLASK_PID=$!
+
+# Wait a moment for Flask to start
+sleep 2
+
+# Start React dev server
+echo "🚀 Starting React Dev Server on http://localhost:5173"
+cd client && npm run dev &
+REACT_PID=$!
+
+echo ""
+echo "=========================================="
+echo "DeepDiver is running!"
+echo "  - API:    http://localhost:$PORT"
+echo "  - Frontend: http://localhost:5173"
+echo "=========================================="
+echo ""
+echo "Press Ctrl+C to stop both servers"
+
+# Wait for both processes
+wait
